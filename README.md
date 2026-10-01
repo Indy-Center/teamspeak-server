@@ -25,14 +25,33 @@ This is the one app on the VPS that publishes ports on the host instead of going
   - `docker-compose.yml`: the TeamSpeak service, its published ports, the `ts3-data` volume and its own network.
   - `query_ip_allowlist.txt`: addresses exempt from ServerQuery flood limits: loopback and the compose network. It is mounted at `/etc/ts3server/`, outside the data directory, because the image's entrypoint changes the owner of everything under `/var/ts3server` and fails on a read-only file there.
   - `.env.example`: the runtime settings the deploy writes to `.env`. None yet.
-- `.github/workflows/ci.yml`: checks the compose file, pulls the image, and starts the server on the runner to see it stay up.
+  - `snapshot.sh`: copies a native TeamSpeak install's data into one tarball, while the server runs. Only needed until cutover.
+- `scripts/restore.sh`: replaces the data volume with a snapshot tarball. The Restore workflow runs it on the VPS over SSH.
+- `.github/workflows/ci.yml`: checks the compose file, pulls the image, starts the server on the runner to see it stay up, then snapshots it, wipes it and restores it.
 - `.github/workflows/build-and-deploy.yml`: runs CI, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
+- `.github/workflows/restore.yml`: run by hand; loads a snapshot from `~/backups/teamspeak-server/` on the VPS into the server.
 
 ## Data
 
 All server state lives in the `teamspeak-server_ts3-data` Docker volume, mounted at `/var/ts3server`: the SQLite database (identities, groups, permissions, channels, bans, the server's own identity), `files/` (icons, avatars, channel files) and the license key. None of it is in this repository, and the repository is public, so none of it ever should be.
 
 The volume is named after the repository. Renaming the repository starts the server on a new, empty volume.
+
+## Loading production data
+
+The container is filled from a snapshot of the native install at `/opt/teamspeak-server`. Docker on the VPS can't read `/opt`, so the snapshot is taken on the host and written under `/home/deploy`.
+
+1. On the VPS, as root:
+
+   ```bash
+   bash /home/deploy/apps/teamspeak-server/snapshot.sh /opt/teamspeak-server /home/deploy/backups/teamspeak-server
+   ```
+
+   It prints the tarball's path. The server keeps running; the copy uses SQLite's online backup, so it includes changes that are still in the write-ahead log. Add `--with-license` as a third argument to include `licensekey.dat`; do that for the cutover snapshot only. It needs `sqlite3` on the host.
+
+2. Run **Actions → Restore → Run workflow** with the tarball's file name, and the repository name as confirmation.
+
+Restore stops the server, empties the data volume, unpacks the snapshot and starts the server again. It fails if the server comes up on an empty database, which it detects by the server announcing a new privilege key. It wipes whatever the container held, so after cutover it is a disaster-recovery tool, not a routine one.
 
 ## Local development
 
