@@ -33,7 +33,7 @@ This is the one app on the VPS that publishes ports on the host instead of going
 
 ## Data
 
-All server state lives in the `teamspeak-server_ts3-data` Docker volume, mounted at `/var/ts3server`: the SQLite database (identities, groups, permissions, channels, bans, the server's own identity), `files/` (icons, avatars, channel files) and the license key. None of it is in this repository, and the repository is public, so none of it ever should be.
+All server state lives in the `teamspeak-server_ts3-data` Docker volume, mounted at `/var/ts3server`: the SQLite database (identities, groups, permissions, channels, bans, the server's own identity), and `files/` (icons, avatars, channel files). The server is unlicensed, so there is no license key to carry. None of it is in this repository, and the repository is public, so none of it ever should be.
 
 The volume is named after the repository. Renaming the repository starts the server on a new, empty volume.
 
@@ -47,7 +47,7 @@ The container is filled from a snapshot of the native install at `/opt/teamspeak
    bash /home/deploy/apps/teamspeak-server/snapshot.sh /opt/teamspeak-server /home/deploy/backups/teamspeak-server
    ```
 
-   It prints the tarball's path. The server keeps running; the copy uses SQLite's online backup, so it includes changes that are still in the write-ahead log. Add `--with-license` as a third argument to include `licensekey.dat`; do that for the cutover snapshot only. It needs `sqlite3` on the host.
+   It prints the tarball's path. The server keeps running; the copy uses SQLite's online backup, so it includes changes that are still in the write-ahead log. It needs `sqlite3` on the host (`apt install sqlite3`).
 
 2. Run **Actions → Restore → Run workflow** with the tarball's file name, and the repository name as confirmation.
 

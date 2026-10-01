@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Snapshots a native TeamSpeak install into a tarball that scripts/restore.sh can load. Run as root.
-# Usage: snapshot.sh <install dir> <output dir> [--with-license]
+# Usage: snapshot.sh <install dir> <output dir>
 set -euo pipefail
 
-src=${1:?usage: snapshot.sh <install dir> <output dir> [--with-license]}
-out=${2:?usage: snapshot.sh <install dir> <output dir> [--with-license]}
-license=${3:-}
+src=${1:?usage: snapshot.sh <install dir> <output dir>}
+out=${2:?usage: snapshot.sh <install dir> <output dir>}
 db=$src/ts3server.sqlitedb
 
 command -v sqlite3 >/dev/null || { echo "sqlite3 is not installed" >&2; exit 1; }
@@ -26,9 +25,6 @@ if [ -d "$src/files" ]; then
 fi
 if [ -f "$src/ssh_host_rsa_key" ]; then
   cp -a "$src/ssh_host_rsa_key" "$work/"
-fi
-if [ "$license" = --with-license ]; then
-  cp -a "$src/licensekey.dat" "$work/"
 fi
 
 if [ ! -d "$out" ]; then
