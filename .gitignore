@@ -1,0 +1,20 @@
+# Secrets
+.env
+
+# AI assistant files
+.ai/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+.gemini/
+.codex/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.continue/
+.aider*
+.github/copilot-instructions.md
