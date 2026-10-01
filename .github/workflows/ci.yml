@@ -1,0 +1,32 @@
+name: CI
+
+# Runs on pull requests, and from build-and-deploy.yml on main.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose file is valid
+        run: docker compose -f deploy/docker-compose.yml config -q
+
+      - name: Images exist
+        run: docker compose -f deploy/docker-compose.yml pull --quiet
+
+      - name: Server starts and stays up
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d
+          sleep 15
+          docker compose -f deploy/docker-compose.yml ps
+          # Fail if any container is restarting or has restarted.
+          if docker inspect -f '{{.State.Restarting}} {{.RestartCount}}' $(docker compose -f deploy/docker-compose.yml ps -aq) | grep -qv '^false 0$'; then
+            docker compose -f deploy/docker-compose.yml logs --tail 50
+            exit 1
+          fi
