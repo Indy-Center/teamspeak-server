@@ -5,7 +5,7 @@ The TeamSpeak 3 voice server for Indy Center, run from the official `teamspeak` 
 [![Build and Deploy](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status: not production yet.** Production TeamSpeak still runs natively under PM2 on the same VPS. This container runs beside it on test ports until it's proven, then takes over the real ports ([DEV-171](https://zidartcc.atlassian.net/browse/DEV-171)).
+**Status: not production yet.** Production TeamSpeak still runs natively on the same VPS, as the `teamspeak` systemd service. This container runs beside it on test ports until it's proven, then takes over the real ports ([DEV-171](https://zidartcc.atlassian.net/browse/DEV-171)).
 
 ## Ports
 
