@@ -11,6 +11,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      APP: ${{ github.event.repository.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,13 +22,36 @@ jobs:
       - name: Images exist
         run: docker compose -f deploy/docker-compose.yml pull --quiet
 
+      # Uses the VPS layout, ~/apps/<app>/ and ~/backups/<app>/, so the scripts run unchanged.
       - name: Server starts and stays up
         run: |
-          docker compose -f deploy/docker-compose.yml up -d
+          mkdir -p ~/apps ~/backups/"$APP"
+          cp -r deploy ~/apps/"$APP"
+          cd ~/apps/"$APP"
+          docker compose up -d
           sleep 15
-          docker compose -f deploy/docker-compose.yml ps
+          docker compose ps
           # Fail if any container is restarting or has restarted.
-          if docker inspect -f '{{.State.Restarting}} {{.RestartCount}}' $(docker compose -f deploy/docker-compose.yml ps -aq) | grep -qv '^false 0$'; then
-            docker compose -f deploy/docker-compose.yml logs --tail 50
+          if docker inspect -f '{{.State.Restarting}} {{.RestartCount}}' $(docker compose ps -aq) | grep -qv '^false 0$'; then
+            docker compose logs --tail 50
             exit 1
           fi
+
+      - name: Snapshot and restore round trip
+        run: |
+          cd ~/apps/"$APP"
+          # A fresh server announces a new privilege key; restore.sh relies on that message.
+          logs=$(docker compose logs teamspeak 2>&1)
+          grep -qi 'privilege key created' <<<"$logs"
+
+          # Snapshot the running server straight from its volume, as snapshot.sh does a native install.
+          data=$(docker volume inspect -f '{{.Mountpoint}}' "${APP}_ts3-data")
+          sudo chmod o+x /var/lib/docker
+          sudo bash snapshot.sh "$data" "$HOME/backups/$APP"
+          file=$(ls "$HOME/backups/$APP")
+          contents=$(tar tzf "$HOME/backups/$APP/$file")
+          grep -qx './ts3server.sqlitedb' <<<"$contents"
+
+          # Wipe the server, then restore; restore.sh fails if the database did not come back.
+          docker compose down -v
+          FILE="$file" bash "$GITHUB_WORKSPACE/scripts/restore.sh"
