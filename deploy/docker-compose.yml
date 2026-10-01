@@ -1,7 +1,7 @@
 # TeamSpeak 3 server, deployed to /home/deploy/apps/teamspeak-server/ on the Vanderbilt VPS.
 services:
   teamspeak:
-    image: teamspeak:3.13.8@sha256:2b3412de8b5ccd93cf131f2be5719e6dbc188e8729705dafa0c59b5debb63c4a
+    image: teamspeak:3.13.7@sha256:c1f32b157d1b5cb922bb64656b416f09fb5e854723a45be04635485a4e8e56a2
     restart: unless-stopped
     # Written on the VPS by the deploy from the repo's ENV_* settings.
     env_file:
