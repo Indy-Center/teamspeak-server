@@ -1,0 +1,39 @@
+# TeamSpeak 3 server, deployed to /home/deploy/apps/teamspeak-server/ on the Vanderbilt VPS.
+services:
+  teamspeak:
+    image: teamspeak:3.13.8@sha256:2b3412de8b5ccd93cf131f2be5719e6dbc188e8729705dafa0c59b5debb63c4a
+    restart: unless-stopped
+    # Written on the VPS by the deploy from the repo's ENV_* settings.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TS3SERVER_LICENSE: accept
+      TS3SERVER_IP_ALLOWLIST: /etc/ts3server/query_ip_allowlist.txt
+      # Test port; remove at cutover.
+      TS3SERVER_FILETRANSFER_PORT: "30034"
+    ports:
+      # Test ports; cutover swaps these for 9987, 30033 and 10011.
+      - "9988:9987/udp" # voice
+      - "30034:30034/tcp" # file transfer
+      - "127.0.0.1:10012:10011/tcp" # ServerQuery, loopback only
+    volumes:
+      - ts3-data:/var/ts3server
+      - ./query_ip_allowlist.txt:/etc/ts3server/query_ip_allowlist.txt:ro
+    networks:
+      teamspeak:
+        ipv4_address: 172.30.10.10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  teamspeak:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+
+volumes:
+  ts3-data:
