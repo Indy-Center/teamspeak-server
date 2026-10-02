@@ -10,13 +10,10 @@ services:
     environment:
       TS3SERVER_LICENSE: accept
       TS3SERVER_IP_ALLOWLIST: /etc/ts3server/query_ip_allowlist.txt
-      # Test port; remove at cutover.
-      TS3SERVER_FILETRANSFER_PORT: "30034"
     ports:
-      # Test ports; cutover swaps these for 9987, 30033 and 10011.
-      - "9988:9987/udp" # voice
-      - "30034:30034/tcp" # file transfer
-      - "127.0.0.1:10012:10011/tcp" # ServerQuery, loopback only
+      - "9987:9987/udp" # voice
+      - "30033:30033/tcp" # file transfer
+      - "127.0.0.1:10011:10011/tcp" # ServerQuery, loopback only
     volumes:
       - ts3-data:/var/ts3server
       - ./query_ip_allowlist.txt:/etc/ts3server/query_ip_allowlist.txt:ro

@@ -5,15 +5,15 @@ The TeamSpeak 3 voice server for Indy Center, run from the official `teamspeak` 
 [![Build and Deploy](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status: not production yet.** Production TeamSpeak still runs natively on the same VPS, as the `teamspeak` systemd service. This container runs beside it on test ports until it's proven, then takes over the real ports ([DEV-171](https://zidartcc.atlassian.net/browse/DEV-171)).
+This is the production server. It replaced the native install at `/opt/teamspeak-server` (the `teamspeak` systemd service, now stopped and disabled) in [DEV-171](https://zidartcc.atlassian.net/browse/DEV-171).
 
 ## Ports
 
-| Purpose | Published on the VPS today | After cutover |
-| ------- | -------------------------- | ------------- |
-| Voice | `9988/udp` | `9987/udp` |
-| File transfer (icons, avatars, channel files) | `30034/tcp` | `30033/tcp` |
-| ServerQuery | `127.0.0.1:10012/tcp` | `127.0.0.1:10011/tcp` |
+| Purpose | Published on the VPS |
+| ------- | -------------------- |
+| Voice | `9987/udp` |
+| File transfer (icons, avatars, channel files) | `30033/tcp` |
+| ServerQuery | `127.0.0.1:10011/tcp` |
 
 ServerQuery is published on the VPS's loopback address only and must never be reachable from outside.
 
@@ -59,13 +59,15 @@ Restore stops the server, empties the data volume, unpacks the snapshot and star
 docker compose -f deploy/docker-compose.yml up
 ```
 
-This starts a fresh server with an empty database. The log prints a `serveradmin` password and a privilege key once; connect a TeamSpeak client to `localhost:9988` and paste the key to become server admin. `docker compose -f deploy/docker-compose.yml down -v` throws the server and its data away.
+This starts a fresh server with an empty database. The log prints a `serveradmin` password and a privilege key once; connect a TeamSpeak client to `localhost` and paste the key to become server admin. `docker compose -f deploy/docker-compose.yml down -v` throws the server and its data away.
 
 ## Deployment
 
 `build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` first and only deploys if it passes, then checks the container is still up 15 seconds later. [Deploying to the VPS](https://tech.flyindycenter.com/patterns/vps-apps/) describes the pipeline.
 
 A deploy that changes `deploy/docker-compose.yml` recreates the container, which disconnects everyone on the server for a few seconds. Merge those changes when the server is quiet. A deploy that changes nothing in `deploy/` leaves the container running.
+
+The legacy Discord sync bot in `/opt/ts-disc-control` connects to ServerQuery on `127.0.0.1:10011` and never reconnects on its own. Restart it after any deploy that recreates the container.
 
 The image is pinned by digest so a deploy never pulls a rebuilt tag and recreates the container by surprise. Upgrading TeamSpeak is a change to the image line: the tag and its digest together. The server upgrades its database on first start and can't go back to an older version, so take a copy of the data first.
 
