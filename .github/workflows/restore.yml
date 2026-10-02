@@ -1,0 +1,58 @@
+name: Restore
+
+# Replaces the server's data with a snapshot from ~/backups/<repo name>/ on the VPS.
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: Snapshot file name in ~/backups/<repo name>/ on the VPS
+        required: true
+      confirm:
+        description: Type the repository name to confirm. This wipes the server's current data.
+        required: true
+
+concurrency:
+  group: deploy-${{ github.event.repository.name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    env:
+      APP: ${{ github.event.repository.name }}
+      FILE: ${{ inputs.file }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Check inputs
+        run: |
+          [ "$CONFIRM" = "$APP" ] || { echo "confirm must be '$APP'"; exit 1; }
+          [[ "$FILE" =~ ^[A-Za-z0-9._-]+\.tar\.gz$ ]] || { echo "file must be a .tar.gz file name with no path"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          VANDERBILT_HOST: ${{ vars.VANDERBILT_HOST }}
+          VANDERBILT_DEPLOY_USER: ${{ vars.VANDERBILT_DEPLOY_USER }}
+          VANDERBILT_DEPLOY_SSH_KEY: ${{ secrets.VANDERBILT_DEPLOY_SSH_KEY }}
+          VANDERBILT_KNOWN_HOSTS: ${{ secrets.VANDERBILT_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VANDERBILT_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VANDERBILT_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VANDERBILT_HOST
+            User $VANDERBILT_DEPLOY_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+          EOF
+
+      - name: Restore the snapshot
+        run: ssh vps "APP=$APP FILE=$FILE bash -s" < scripts/restore.sh
