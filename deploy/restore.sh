@@ -37,7 +37,10 @@ if [ -e .restore-old/.complete ]; then
   find . -mindepth 1 -maxdepth 1 ! -name '.restore-*' -exec rm -rf {} +
 fi
 find .restore-old -mindepth 1 -maxdepth 1 ! -name .complete -exec mv {} . \;
-rm -rf .restore-old .restore-new
+# find ignores a failed mv, so rmdir checks all of it moved: anything left stays in .restore-old.
+rm -f .restore-old/.complete
+rmdir .restore-old
+rm -rf .restore-new
 chown -R 9987:9987 .
 EOF
 }
@@ -114,6 +117,9 @@ set -eu
 cd /var/ts3server
 mkdir .restore-old
 find . -mindepth 1 -maxdepth 1 ! -name '.restore-*' -exec mv {} .restore-old/ \;
+# find ignores a failed mv: only mark it complete once nothing of the old data is left outside,
+# since undo deletes what is outside a complete .restore-old.
+[ -z "$(find . -mindepth 1 -maxdepth 1 ! -name '.restore-*')" ]
 touch .restore-old/.complete
 find .restore-new -mindepth 1 -maxdepth 1 -exec mv {} . \;
 rmdir .restore-new
