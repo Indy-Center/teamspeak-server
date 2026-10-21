@@ -111,6 +111,8 @@ files=("$out"/*)
 backup=${files[0]}
 # The runner (and the deploy user) must be able to read and delete what the recipe wrote.
 [ -O "$backup" ] || fail "the backup is not owned by the user who ran backup.sh"
+# It holds the server's identity, so nobody else may read it.
+[ "$(stat -c %a "$backup")" = 600 ] || fail "the backup's mode is $(stat -c %a "$backup"), not 600"
 
 echo "--- A file with no database is refused, and the server keeps running"
 bad=$work/bad.tar.gz
