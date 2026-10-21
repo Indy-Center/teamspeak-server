@@ -40,7 +40,7 @@ for item in files ssh_host_rsa_key licensekey.dat; do
 done
 
 # One archive, written under a temporary name and renamed when complete, readable only by the caller.
-tar czf /out/.teamspeak-server.tar.gz.partial -C "$work" .
+(umask 077 && tar czf /out/.teamspeak-server.tar.gz.partial -C "$work" .)
 chown "$OWNER" /out/.teamspeak-server.tar.gz.partial
 chmod 600 /out/.teamspeak-server.tar.gz.partial
 mv /out/.teamspeak-server.tar.gz.partial /out/teamspeak-server.tar.gz
