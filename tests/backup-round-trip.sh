@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Proves deploy/backup.sh and deploy/restore.sh round-trip a real server: start TeamSpeak,
 # give it a channel and an uploaded folder, back up, wipe the volume, restore, and check the
-# channel, the folder and the server's identity are back. CI runs it on every pull request.
+# channel, the folder and the server's identity are back. Also checks a failed or interrupted
+# restore leaves the server on its earlier data. CI runs it on every pull request.
 #
 # Usage: bash tests/backup-round-trip.sh
 # Needs Docker, and ports 9987/udp, 30033 and 10011 free on this machine.
@@ -44,12 +45,14 @@ query() {
   exec 3<&-
 }
 
-# Waits up to three minutes for the server to finish starting. ServerQuery opens before the
-# server loads its allowlist, and commands sent in that gap count towards flood protection and
-# get this machine banned, so wait for the allowlist line in the log, not for the port.
+# Now, for wait_for_query.
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Waits up to three minutes, from the time given, for the server to load its query allowlist.
+# Queries sent before that get this machine banned (see README, Backups).
 wait_for_query() {
   for _ in $(seq 90); do
-    if [[ $(docker compose logs teamspeak 2>&1) == *"updated query_ip_allowlist"* ]]; then return 0; fi
+    if [[ $(docker compose logs --since "$1" teamspeak 2>&1) == *"updated query_ip_allowlist"* ]]; then return 0; fi
     sleep 2
   done
   fail "the server never finished starting"
@@ -60,9 +63,32 @@ identity() {
   query serverinfo | tr ' ' '\n' | sed -n 's/^virtualserver_unique_identifier=//p'
 }
 
+# Lists the channel's uploaded files and folders.
+uploads() { query "ftgetfilelist cid=$cid cpw= path=\/"; }
+
+# Checks the server holds the test's data: the channel, the folder and the first identity.
+check_data() {
+  [[ $(query channellist) == *'channel_name=Round\strip'* ]] || fail "$1: the channel is missing"
+  [[ $(uploads) == *name=round-trip-folder* ]] || fail "$1: the uploaded folder is missing"
+  local now_identity
+  now_identity=$(identity)
+  [ "$now_identity" = "$before" ] || fail "$1: the server's identity changed: $before became $now_identity"
+}
+
+# Runs a command in the data volume, with the server's data at /var/ts3server.
+in_volume() { docker compose run --rm --no-deps -T data-tools sh -c "$1" </dev/null; }
+
+# Fails if a restore left its working folders in the volume.
+no_leftovers() {
+  local left
+  left=$(in_volume 'ls -A /var/ts3server | grep "^\.restore-" || true')
+  [ -z "$left" ] || fail "$1: left in the volume: $left"
+}
+
 echo "--- Start a fresh server"
+since=$(now)
 docker compose up -d
-wait_for_query
+wait_for_query "$since"
 # restore.sh tells a server that lost its database by this message, so check it still exists.
 [[ $(docker compose logs teamspeak 2>&1) == *"privilege key created"* ]] \
   || fail "a fresh server no longer logs 'privilege key created', which restore.sh relies on"
@@ -72,8 +98,6 @@ reply=$(query "channelcreate channel_name=Round\strip channel_flag_permanent=1")
 cid=$(sed -n 's/^cid=\([0-9]*\).*/\1/p' <<<"$reply")
 [ -n "$cid" ] || fail "could not create the channel: $reply"
 query "ftcreatedir cid=$cid cpw= dirname=\/round-trip-folder" >/dev/null
-# Lists the channel's uploaded files and folders.
-uploads() { query "ftgetfilelist cid=$cid cpw= path=\/"; }
 [[ $(uploads) == *name=round-trip-folder* ]] || fail "could not create the folder: $(uploads)"
 before=$(identity)
 [ -n "$before" ] || fail "could not read the server's identity"
@@ -93,19 +117,46 @@ bad=$work/bad.tar.gz
 tar czf "$bad" -C "$work" out
 if bash restore.sh "$bad"; then fail "restore.sh accepted a file with no database"; fi
 [ -n "$(docker compose ps -q --status running teamspeak)" ] || fail "a refused restore stopped the server"
+no_leftovers "after a refused restore"
+
+echo "--- A restore the server starts empty from is undone"
+# An empty file is a valid, empty SQLite database, so it passes the archive check, and the
+# server makes a new one, with a new identity, when it starts.
+mkdir "$work/empty"
+: > "$work/empty/ts3server.sqlitedb"
+tar czf "$work/empty.tar.gz" -C "$work/empty" .
+since=$(now)
+if bash restore.sh "$work/empty.tar.gz"; then fail "restore.sh accepted a server that started empty"; fi
+wait_for_query "$since"
+check_data "after an undone restore"
+no_leftovers "after an undone restore"
+
+echo "--- An interrupted restore is refused until --undo puts the earlier data back"
+# What an interruption after the swap leaves: the data set aside, the archive's moved in.
+docker compose stop teamspeak
+in_volume 'cd /var/ts3server && mkdir .restore-old &&
+  find . -mindepth 1 -maxdepth 1 ! -name ".restore-*" -exec mv {} .restore-old/ \; &&
+  touch .restore-old/.complete .from-the-archive'
+if bash restore.sh "$backup"; then fail "restore.sh ran over an interrupted restore"; fi
+since=$(now)
+bash restore.sh --undo
+wait_for_query "$since"
+check_data "after --undo"
+no_leftovers "after --undo"
+[ -z "$(in_volume 'ls -A /var/ts3server | grep -x .from-the-archive || true')" ] \
+  || fail "--undo kept a file the interrupted restore had moved in"
 
 echo "--- Wipe the server and its volume"
 docker compose down -v
 docker volume inspect teamspeak-server-test_ts3-data >/dev/null 2>&1 && fail "the volume was not removed"
 
 echo "--- Restore"
+since=$(now)
 bash restore.sh "$backup"
-wait_for_query
+wait_for_query "$since"
 
 echo "--- Check the data came back"
-[[ $(query channellist) == *'channel_name=Round\strip'* ]] || fail "the channel is missing"
-[[ $(uploads) == *name=round-trip-folder* ]] || fail "the uploaded folder is missing"
-after=$(identity)
-[ "$after" = "$before" ] || fail "the server's identity changed: $before became $after"
+check_data "after the restore"
+no_leftovers "after the restore"
 
-echo "PASS: channel, uploaded folder and identity ($after) survived backup and restore"
+echo "PASS: channel, uploaded folder and identity ($before) survived backup and restore"
