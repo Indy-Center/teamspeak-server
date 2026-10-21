@@ -70,7 +70,7 @@ jobs:
           ssh vps "APP=$APP bash -s" <<'EOF'
           set -e
           cd ~/apps/"$APP"
-          docker compose pull --quiet
+          docker compose --profile tools pull --quiet
           docker compose up -d --remove-orphans
           sleep 15
           docker compose ps
