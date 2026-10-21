@@ -22,14 +22,13 @@ This is the one app on the VPS that publishes ports on the host instead of going
 ## Project layout
 
 - `deploy/`: everything deployed to `/home/deploy/apps/teamspeak-server/` on the VPS, and nothing else.
-  - `docker-compose.yml`: the TeamSpeak service, its published ports, the `ts3-data` volume and its own network.
+  - `docker-compose.yml`: the TeamSpeak service, its published ports, the `ts3-data` volume and its own network. Also `data-tools`, which never runs on its own: the backup scripts start it as a throwaway container to read and write the volume. The deploy pulls it, so it is on the VPS before the first backup.
+  - `backup.sh` and `restore.sh`: the backup recipe and its reverse (see [Backups](#backups)).
   - `query_ip_allowlist.txt`: addresses exempt from ServerQuery flood limits: loopback and the compose network. It is mounted at `/etc/ts3server/`, outside the data directory, because the image's entrypoint changes the owner of everything under `/var/ts3server` and fails on a read-only file there.
   - `.env.example`: the runtime settings the deploy writes to `.env`. None yet.
-  - `snapshot.sh`: copies a native TeamSpeak install's data into one tarball, while the server runs. Only needed until cutover.
-- `scripts/restore.sh`: replaces the data volume with a snapshot tarball. The Restore workflow runs it on the VPS over SSH.
-- `.github/workflows/ci.yml`: checks the compose file, pulls the image, starts the server on the runner to see it stay up, then snapshots it, wipes it and restores it.
+- `tests/backup-round-trip.sh`: proves a backup restores as the same server. CI runs it.
+- `.github/workflows/ci.yml`: checks the compose file, pulls the images, starts the server on the runner to see it stay up, then runs the backup round trip.
 - `.github/workflows/build-and-deploy.yml`: runs CI, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
-- `.github/workflows/restore.yml`: run by hand; loads a snapshot from `~/backups/teamspeak-server/` on the VPS into the server.
 
 ## Data
 
@@ -37,21 +36,50 @@ All server state lives in the `teamspeak-server_ts3-data` Docker volume, mounted
 
 The volume is named after the repository. Renaming the repository starts the server on a new, empty volume.
 
-## Loading production data
+## Backups
 
-The container is filled from a snapshot of the native install at `/opt/teamspeak-server`. Docker on the VPS can't read `/opt`, so the snapshot is taken on the host and written under `/home/deploy`.
+The server is backed up nightly by the VPS's backup runner, which encrypts each backup and stores it off the box. [docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups) owns the runner and the schedule. This repository ships the two scripts the runner's contract asks for.
 
-1. On the VPS, as root:
+`deploy/backup.sh <folder>` writes one archive, `teamspeak-server.tar.gz`, into the folder. It holds everything that makes this server itself, so a restore brings back the same server rather than a new one that clients warn about:
 
-   ```bash
-   bash /home/deploy/apps/teamspeak-server/snapshot.sh /opt/teamspeak-server /home/deploy/backups/teamspeak-server
-   ```
+| In the archive | Holds |
+| -------------- | ----- |
+| `ts3server.sqlitedb` | Channels, groups, permissions, bans, users, and the server's identity (its key pair, which clients remember) |
+| `files/` | Uploaded icons, avatars and channel files |
+| `ssh_host_rsa_key` | The SSH ServerQuery host key, if the server has made one |
+| `licensekey.dat` | The licence, if there is one |
 
-   It prints the tarball's path. The server keeps running; the copy uses SQLite's online backup, so it includes changes that are still in the write-ahead log. It needs `sqlite3` on the host (`apt install sqlite3`).
+The server keeps running during a backup. The database is in write-ahead-log mode, so recent changes sit in a separate `-wal` file, and copying the database file alone would lose them. The script copies it with SQLite's online backup instead, which gets the database as it stands while the server writes, and checks the copy's integrity. The TeamSpeak image has no `sqlite3`, so this runs in `data-tools`, a throwaway container from the official Python image, whose `sqlite3` module does the online backup. The archive is unencrypted until the runner encrypts it, and holds the server's identity, so it is readable only by whoever ran the script.
 
-2. Run **Actions → Restore → Run workflow** with the tarball's file name, and the repository name as confirmation.
+`deploy/restore.sh <archive>` puts a decrypted archive back, replacing the server's data:
 
-Restore stops the server, empties the data volume, unpacks the snapshot and starts the server again. It fails if the server comes up on an empty database, which it detects by the server announcing a new privilege key. It wipes whatever the container held, so after cutover it is a disaster-recovery tool, not a routine one.
+1. with the server still running, unpacks the archive into a folder inside the data volume and checks its database passes SQLite's integrity check. A bad archive stops here and changes nothing;
+2. stops the server, moves its data aside into `.restore-old` in the volume, and moves the archive's data in;
+3. starts the server, and checks it loaded the archive's database. A server that finds no usable database makes a new one, with a new identity, and announces a new admin privilege key, so that message means the restore failed;
+4. deletes the data it moved aside.
+
+If anything fails or is interrupted after the server stops, `restore.sh` puts the earlier data back and starts the server on it, and says so. If even that fails, the earlier data stays in the volume at `/var/ts3server/.restore-old`, and a later `restore.sh` refuses to run until `bash restore.sh --undo` has put it back.
+
+Everyone on the server is disconnected while it restarts, and the legacy Discord sync bot needs a restart afterwards (see [Deployment](#deployment)). A Recover one app runbook is coming to tech.flyindycenter.com; until then, see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups). In short, on the VPS as `deploy`, `backups list teamspeak-server` shows the backups and `backups restore teamspeak-server <backup>` fetches, decrypts and restores one.
+
+To run the scripts by hand instead, as `deploy`, keep the archive under `/home/deploy` (today's VPS runs Docker as a snap, which can't read most paths outside `/home`) and out of `~/backups/teamspeak-server/`, which the runner empties on every backup:
+
+```bash
+cd ~/apps/teamspeak-server
+mkdir -p -m 700 ~/teamspeak-before-restore
+bash backup.sh ~/teamspeak-before-restore   # a copy of what is there now, in case
+bash restore.sh /path/to/teamspeak-server.tar.gz
+```
+
+Delete `~/teamspeak-before-restore` once the restored server is checked: it holds the server's identity unencrypted.
+
+The snapshots of the old native install, taken for the move to Docker, have the same layout, so `restore.sh` loads them too. They are in `~/backups/teamspeak-server/` on the VPS, which the runner deletes on its first backup of this server: move them out before this recipe is deployed (`mv ~/backups/teamspeak-server ~/teamspeak-migration-snapshots`), or delete them if they are no longer needed.
+
+CI proves the round trip on every pull request (`tests/backup-round-trip.sh`): it starts a server, creates a channel and uploads a folder to it, backs up, deletes the volume, restores, and checks the channel, the folder and the server's identity are back. It also checks that a restore that fails after the stop, or was interrupted, leaves the server on its earlier data. The test waits for the server to log that it loaded its query allowlist before sending any ServerQuery command: ServerQuery opens before that, and commands sent in the gap count towards flood protection and get the machine banned. To run it yourself, with Docker on an x86 machine (the TeamSpeak image is x86 only) and ports 9987, 10011 and 30033 free:
+
+```bash
+bash tests/backup-round-trip.sh
+```
 
 ## Local development
 
@@ -69,7 +97,7 @@ A deploy that changes `deploy/docker-compose.yml` recreates the container, which
 
 The legacy Discord sync bot in `/opt/ts-disc-control` connects to ServerQuery on `127.0.0.1:10011` and never reconnects on its own. Restart it after any deploy that recreates the container.
 
-The image is pinned by digest so a deploy never pulls a rebuilt tag and recreates the container by surprise. Upgrading TeamSpeak is a change to the image line: the tag and its digest together. The server upgrades its database on first start and can't go back to an older version, so take a copy of the data first.
+The image is pinned by digest so a deploy never pulls a rebuilt tag and recreates the container by surprise. Upgrading TeamSpeak is a change to the image line: the tag and its digest together. The server upgrades its database on first start and can't go back to an older version, so take a backup first: `backups now teamspeak-server` on the VPS, as `deploy`.
 
 The deploy uses the organization's `VANDERBILT_*` variables and secrets. An org admin adds this repository to all four before the first deploy.
 
