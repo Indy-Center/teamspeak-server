@@ -19,8 +19,9 @@ jobs:
       - name: Compose file is valid
         run: docker compose -f deploy/docker-compose.yml config -q
 
+      # --profile tools also pulls data-tools, the image backup.sh and restore.sh use.
       - name: Images exist
-        run: docker compose -f deploy/docker-compose.yml pull --quiet
+        run: docker compose -f deploy/docker-compose.yml --profile tools pull --quiet
 
       # Uses the VPS layout, ~/apps/<app>/ and ~/backups/<app>/, so the scripts run unchanged.
       - name: Server starts and stays up
@@ -55,3 +56,9 @@ jobs:
           # Wipe the server, then restore; restore.sh fails if the database did not come back.
           docker compose down -v
           FILE="$file" bash "$GITHUB_WORKSPACE/scripts/restore.sh"
+
+      # The backup recipe's round trip. It starts its own server, so stop this one to free the ports.
+      - name: Back up, wipe and restore
+        run: |
+          (cd ~/apps/"$APP" && docker compose down -v)
+          bash tests/backup-round-trip.sh
