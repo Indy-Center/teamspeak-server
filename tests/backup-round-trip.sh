@@ -63,6 +63,9 @@ identity() {
 echo "--- Start a fresh server"
 docker compose up -d
 wait_for_query
+# restore.sh tells a server that lost its database by this message, so check it still exists.
+[[ $(docker compose logs teamspeak 2>&1) == *"privilege key created"* ]] \
+  || fail "a fresh server no longer logs 'privilege key created', which restore.sh relies on"
 
 echo "--- Give it data: a channel, and a folder uploaded to that channel"
 reply=$(query "channelcreate channel_name=Round\strip channel_flag_permanent=1")
