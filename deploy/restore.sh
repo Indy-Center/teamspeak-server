@@ -60,6 +60,14 @@ start_server() {
 }
 
 if [ "$arg" = --undo ]; then
+  # Exit code 3 means no .restore-old; any other failure is Docker's, and stops here.
+  set_aside=0
+  data_tools <<< 'test -d /var/ts3server/.restore-old || exit 3' || set_aside=$?
+  if [ "$set_aside" = 3 ]; then
+    echo "Nothing to undo: no data set aside by an interrupted restore."
+    exit 0
+  fi
+  [ "$set_aside" = 0 ] || exit "$set_aside"
   docker compose stop teamspeak
   undo
   start_server

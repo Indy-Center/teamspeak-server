@@ -145,6 +145,8 @@ check_data "after --undo"
 no_leftovers "after --undo"
 [ -z "$(in_volume 'ls -A /var/ts3server | grep -x .from-the-archive || true')" ] \
   || fail "--undo kept a file the interrupted restore had moved in"
+[[ $(bash restore.sh --undo) == "Nothing to undo"* ]] || fail "a second --undo did not say there was nothing to undo"
+[ -n "$(docker compose ps -q --status running teamspeak)" ] || fail "--undo with nothing to undo stopped the server"
 
 echo "--- Wipe the server and its volume"
 docker compose down -v
