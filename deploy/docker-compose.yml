@@ -26,9 +26,7 @@ services:
         max-size: 10m
         max-file: "5"
 
-  # Never runs on its own: backup.sh and restore.sh start it as a throwaway container with
-  # `docker compose run`, to read and write the data volume. The TeamSpeak image has no sqlite3;
-  # Python's sqlite3 module takes SQLite's online backup.
+  # Throwaway container for backup.sh and restore.sh; never started by `up`.
   data-tools:
     image: python:3.13.16-alpine3.24@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
     profiles: [tools]

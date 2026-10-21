@@ -10,8 +10,7 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 
-# The app folder, laid out as on the VPS. Its name is the Compose project name, so the test's
-# volume is teamspeak-server-test_ts3-data and never the real server's.
+# The app folder, as on the VPS. Its name makes the volume teamspeak-server-test_ts3-data.
 work=$(mktemp -d)
 app=$work/teamspeak-server-test
 cp -r "$repo/deploy" "$app"
@@ -49,7 +48,6 @@ query() {
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # Waits up to three minutes, from the time given, for the server to load its query allowlist.
-# Queries sent before that get this machine banned (see README, Backups).
 wait_for_query() {
   for _ in $(seq 90); do
     if [[ $(docker compose logs --since "$1" teamspeak 2>&1) == *"updated query_ip_allowlist"* ]]; then return 0; fi

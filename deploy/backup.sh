@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# The backup recipe: writes one archive, teamspeak-server.tar.gz, into the folder it is given.
-# It holds everything that makes this server itself, so restore.sh brings back the same server:
-#   ts3server.sqlitedb  channels, groups, permissions, bans, users, and the server's identity
-#   files/              uploaded icons, avatars and channel files
-#   ssh_host_rsa_key    the SSH ServerQuery host key, if the server made one
-#   licensekey.dat      the licence, if there is one (the server runs unlicensed today)
-# The backup runner (docker-infrastructure) calls it nightly, then encrypts and uploads the file.
-# The server keeps running throughout.
+# Writes the server's data to one archive, teamspeak-server.tar.gz, in the given folder.
+# The server keeps running.
 #
 # Usage: bash backup.sh <empty output folder>
 set -euo pipefail
@@ -19,18 +13,16 @@ out=$(cd "$out" && pwd)
 # Compose finds docker-compose.yml, and the data volume, from this script's folder.
 cd "$(dirname "$0")"
 
-# One throwaway data-tools container does the work: the data volume is at /var/ts3server, the
-# output folder at /out. OWNER is who ran this script, so the archive ends up theirs, not root's.
+# In a throwaway data-tools container: data volume at /var/ts3server, output folder at /out.
+# OWNER is who ran this script.
 docker compose run --rm --no-deps -T -v "$out:/out" -e OWNER="$(id -u):$(id -g)" \
   data-tools sh -s <<'EOF'
 set -eu
 data=/var/ts3server
 work=$(mktemp -d)
 
-# The database, copied with SQLite's online backup. The server keeps it in write-ahead-log mode,
-# so most recent changes live in ts3server.sqlitedb-wal; copying the file alone would lose them.
-# The online backup reads through SQLite, gets the database as it stands, and is safe while the
-# server writes. mode=ro fails if the database is missing, rather than creating an empty one.
+# The database, by SQLite's online backup, then an integrity check of the copy.
+# mode=ro fails on a missing database instead of creating an empty one.
 python3 -c "
 import sqlite3, sys
 src = sqlite3.connect('file:$data/ts3server.sqlitedb?mode=ro', uri=True)
