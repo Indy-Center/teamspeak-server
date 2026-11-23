@@ -1,11 +1,11 @@
 # teamspeak-server
 
-The TeamSpeak 3 voice server for Indy Center, run from the official `teamspeak` image on the Vanderbilt VPS. Controllers connect to it with a TeamSpeak client; nothing calls it over HTTP.
+The TeamSpeak 3 voice server for Indy Center, run from the official `teamspeak` image on the ALEXANDRIA VPS (`alexandria.flyzid.org`). Controllers connect to it with a TeamSpeak client; nothing calls it over HTTP.
 
 [![Build and Deploy](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/Indy-Center/teamspeak-server/actions/workflows/build-and-deploy.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-This is the production server. It replaced the native install at `/opt/teamspeak-server` (the `teamspeak` systemd service, now stopped and disabled) in [DEV-171](https://zidartcc.atlassian.net/browse/DEV-171).
+This is the production server. It first ran on the Vanderbilt droplet, where it replaced the native install at `/opt/teamspeak-server` (the `teamspeak` systemd service, now stopped and disabled) in [DEV-171](https://zidartcc.atlassian.net/browse/DEV-171), and moved to ALEXANDRIA from a backup, keeping its identity, channels and permissions.
 
 ## Ports
 
@@ -63,7 +63,7 @@ If anything fails or is interrupted after the server stops, `restore.sh` puts th
 
 Everyone on the server is disconnected while it restarts, and the legacy Discord sync bot needs a restart afterwards (see [Deployment](#deployment)). A Recover one app runbook is coming to tech.flyindycenter.com; until then, see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups). In short, on the VPS as `deploy`, `backups list teamspeak-server` shows the backups and `backups restore teamspeak-server <backup>` fetches, decrypts and restores one.
 
-To run the scripts by hand instead, as `deploy`, keep the archive under `/home/deploy` (today's VPS runs Docker as a snap, which can't read most paths outside `/home`) and out of `~/backups/teamspeak-server/`, which the runner empties on every backup:
+To run the scripts by hand instead, as `deploy`, keep the archive out of `~/backups/teamspeak-server/`, which the runner empties on every backup. (On the Vanderbilt droplet, where the server ran before ALEXANDRIA, Docker is a snap that can't read most paths outside `/home`, so archives there had to stay under `/home/deploy`. ALEXANDRIA runs Docker from Docker's own packages, without that limit.)
 
 ```bash
 cd ~/apps/teamspeak-server
@@ -74,7 +74,7 @@ bash restore.sh /path/to/teamspeak-server.tar.gz
 
 Delete `~/teamspeak-before-restore` once the restored server is checked: it holds the server's identity unencrypted.
 
-The snapshots of the old native install, taken for the move to Docker, have the same layout, so `restore.sh` loads them too. They are in `~/backups/teamspeak-server/` on the VPS, which the runner deletes on its first backup of this server: move them out before this recipe is deployed (`mv ~/backups/teamspeak-server ~/teamspeak-migration-snapshots`), or delete them if they are no longer needed.
+The snapshots of the old native install, taken for the move to Docker, have the same layout, so `restore.sh` loads them too. They are in `~/backups/teamspeak-server/` on the droplet, which the runner deletes on its first backup of this server: move them out before this recipe is deployed (`mv ~/backups/teamspeak-server ~/teamspeak-migration-snapshots`), or delete them if they are no longer needed.
 
 CI proves the round trip on every pull request (`tests/backup-round-trip.sh`): it starts a server, creates a channel and uploads a folder to it, backs up, deletes the volume, restores, and checks the channel, the folder and the server's identity are back. It also checks that a restore that fails after the stop, or was interrupted, leaves the server on its earlier data. The test waits for the server to log that it loaded its query allowlist before sending any ServerQuery command: ServerQuery opens before that, and commands sent in the gap count towards flood protection and get the machine banned. To run it yourself, with Docker on an x86 machine (the TeamSpeak image is x86 only) and ports 9987, 10011 and 30033 free:
 
@@ -168,7 +168,7 @@ The legacy Discord sync bot in `/opt/ts-disc-control` connects to ServerQuery on
 
 The image is pinned by digest so a deploy never pulls a rebuilt tag and recreates the container by surprise. Upgrading TeamSpeak is a change to the image line: the tag and its digest together. The server upgrades its database on first start and can't go back to an older version, so take a backup first: `backups now teamspeak-server` on the VPS, as `deploy`.
 
-The deploy uses the organization's `VANDERBILT_*` variables and secrets. An org admin adds this repository to all four before the first deploy.
+The deploy goes to the server named by `SERVER` at the top of `build-and-deploy.yml`, `ALEXANDRIA`, using the organization's four `ALEXANDRIA_*` variables and secrets (`ALEXANDRIA_HOST`, `ALEXANDRIA_DEPLOY_USER`, `ALEXANDRIA_DEPLOY_SSH_KEY`, `ALEXANDRIA_KNOWN_HOSTS`). An org admin adds this repository to all four before the first deploy; until then, the deploy's Set up SSH step fails, naming each one it can't see.
 
 ## Disclaimer
 

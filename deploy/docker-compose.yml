@@ -1,4 +1,4 @@
-# TeamSpeak 3 server, deployed to /home/deploy/apps/teamspeak-server/ on the Vanderbilt VPS.
+# TeamSpeak 3 server, deployed to /home/deploy/apps/teamspeak-server/ on ALEXANDRIA.
 services:
   teamspeak:
     image: teamspeak:3.13.8@sha256:2b3412de8b5ccd93cf131f2be5719e6dbc188e8729705dafa0c59b5debb63c4a
