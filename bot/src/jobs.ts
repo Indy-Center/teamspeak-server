@@ -52,12 +52,22 @@ async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set
   }
   // A group the client already has, or no longer has, is already as the job asks.
   for (const group of job.add) {
-    await tolerate(session.addServerGroup(databaseId, group), QUERY_ERRORS.duplicateEntry);
+    await during(`adding group ${group}`, tolerate(session.addServerGroup(databaseId, group), QUERY_ERRORS.duplicateEntry));
   }
   for (const group of job.remove) {
-    await tolerate(session.removeServerGroup(databaseId, group), QUERY_ERRORS.notInGroup);
+    await during(`removing group ${group}`, tolerate(session.removeServerGroup(databaseId, group), QUERY_ERRORS.notInGroup));
   }
   return undefined;
+}
+
+/** A ServerQuery error from `command` says what the bot was doing, so the log names the group. */
+async function during<T>(what: string, command: Promise<T>): Promise<T> {
+  try {
+    return await command;
+  } catch (error) {
+    if (error instanceof QueryError) throw new QueryError(error.id, error.message, error.failedPermid, what);
+    throw error;
+  }
 }
 
 /**
@@ -111,6 +121,9 @@ function retry(jobId: string, error: string): Outcome {
 }
 
 export function describeError(error: unknown): string {
-  if (error instanceof QueryError) return `ServerQuery error ${error.id}: ${error.message}`;
+  if (error instanceof QueryError) {
+    const permission = error.failedPermid === undefined ? '' : ` (failed_permid ${error.failedPermid})`;
+    return `ServerQuery error ${error.id}: ${error.message}${permission}${error.during ? `, ${error.during}` : ''}`;
+  }
   return error instanceof Error ? error.message : String(error);
 }

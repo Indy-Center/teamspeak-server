@@ -141,5 +141,5 @@ async function withTimeout<T>(teamspeak: TeamSpeak, what: string, work: () => Pr
 }
 
 function toQueryError(error: unknown): unknown {
-  return error instanceof ResponseError ? new QueryError(String(error.id), error.msg) : error;
+  return error instanceof ResponseError ? new QueryError(String(error.id), error.msg, error.failedPermid) : error;
 }

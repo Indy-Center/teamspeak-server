@@ -93,6 +93,19 @@ describe('set-groups', () => {
     ]);
   });
 
+  it('names the refused permission and the group it was changing when TeamSpeak refuses one', async () => {
+    teamspeak.addClient(UID, '41', [7, 18]);
+    teamspeak.failCommand = { prefix: 'servergroupdelclient 18 ', error: new QueryError('2568', 'insufficient client permissions', 193) };
+    larry.enqueue({ jobId: 'job-1', type: 'set-groups', uid: UID, add: [], remove: [7, 18] });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(larry.retried).toEqual(['job-1']);
+    expect(larry.results).toEqual([
+      { type: 'failed', jobId: 'job-1', error: 'ServerQuery error 2568: insufficient client permissions (failed_permid 193), removing group 18' },
+    ]);
+  });
+
   it('applies each job of a pull on its own, acking some and retrying others in one call', async () => {
     teamspeak.addClient(UID, '41');
     teamspeak.addClient(OTHER_UID, '42');
