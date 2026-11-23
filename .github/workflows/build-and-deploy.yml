@@ -120,13 +120,14 @@ jobs:
           ssh vps "APP=$APP bash -s" <<'EOF'
           set -e
           cd ~/apps/"$APP"
-          docker compose --profile tools pull --quiet
-          docker compose up -d --remove-orphans
+          # The bot profile starts teamspeak-bot beside TeamSpeak; tools only pulls data-tools for the backups.
+          docker compose --profile tools --profile bot pull --quiet
+          docker compose --profile bot up -d --remove-orphans
           sleep 15
-          docker compose ps
+          docker compose --profile bot ps
           # Fail if any container is restarting or has restarted.
-          if docker inspect -f '{{.State.Restarting}} {{.RestartCount}}' $(docker compose ps -aq) | grep -qv '^false 0$'; then
-            docker compose logs --tail 50
+          if docker inspect -f '{{.State.Restarting}} {{.RestartCount}}' $(docker compose --profile bot ps -aq) | grep -qv '^false 0$'; then
+            docker compose --profile bot logs --tail 50
             exit 1
           fi
           EOF

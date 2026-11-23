@@ -29,7 +29,7 @@ This is the one app on the VPS that publishes ports on the host instead of going
 - `bot/`: teamspeak-bot, a Node 22 and TypeScript project with its own Dockerfile (see [teamspeak-bot](#teamspeak-bot)).
 - `tests/backup-round-trip.sh`: proves a backup restores as the same server. CI runs it.
 - `.github/workflows/ci.yml`: checks the compose file with and without the `bot` profile, pulls the images, starts the server on the runner to see it stay up (without the bot), then runs the backup round trip. A second job runs teamspeak-bot's typecheck, tests and build, and builds its image.
-- `.github/workflows/build-and-deploy.yml`: runs CI, then on `main` builds and pushes teamspeak-bot's image, rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
+- `.github/workflows/build-and-deploy.yml`: runs CI, then on `main` builds and pushes teamspeak-bot's image, rsyncs `deploy/` to ALEXANDRIA and runs `docker compose --profile bot up -d` over SSH.
 
 ## Data
 
@@ -61,7 +61,7 @@ The server keeps running during a backup. The database is in write-ahead-log mod
 
 If anything fails or is interrupted after the server stops, `restore.sh` puts the earlier data back and starts the server on it, and says so. If even that fails, the earlier data stays in the volume at `/var/ts3server/.restore-old`, and a later `restore.sh` refuses to run until `bash restore.sh --undo` has put it back.
 
-Everyone on the server is disconnected while it restarts, and the legacy Discord sync bot needs a restart afterwards (see [Deployment](#deployment)). A Recover one app runbook is coming to tech.flyindycenter.com; until then, see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups). In short, on the VPS as `deploy`, `backups list teamspeak-server` shows the backups and `backups restore teamspeak-server <backup>` fetches, decrypts and restores one.
+Everyone on the server is disconnected while it restarts; teamspeak-bot reconnects by itself (see [teamspeak-bot](#teamspeak-bot)). A Recover one app runbook is coming to tech.flyindycenter.com; until then, see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups). In short, on the VPS as `deploy`, `backups list teamspeak-server` shows the backups and `backups restore teamspeak-server <backup>` fetches, decrypts and restores one.
 
 To run the scripts by hand instead, as `deploy`, keep the archive out of `~/backups/teamspeak-server/`, which the runner empties on every backup. (On the Vanderbilt droplet, where the server ran before ALEXANDRIA, Docker is a snap that can't read most paths outside `/home`, so archives there had to stay under `/home/deploy`. ALEXANDRIA runs Docker from Docker's own packages, without that limit.)
 
@@ -135,7 +135,7 @@ teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds n
 
 `QUERY_HOST` and `QUERY_PORT` are set in the compose file (`teamspeak` and `10011`).
 
-**The `bot` profile.** The service only starts with `--profile bot`, which the deploy doesn't pass, and neither does CI. Until TeamSpeak moves to ALEXANDRIA, a push to `main` deploys to the droplet, and the bot must never run against the live server there; the move turns the profile on in the deploy.
+**The `bot` profile.** The service only starts with `--profile bot`. The deploy passes it, so the bot runs beside TeamSpeak on ALEXANDRIA; CI doesn't. On the server, pass it to any `docker compose` command meant to include the bot, such as `ps`, `logs` and `down`. The bot must never run anywhere else: while TeamSpeak was on the droplet, the deploy left the profile off.
 
 **The image.** CI builds it on every pull request. On `main`, the deploy pushes it to `ghcr.io/indy-center/teamspeak-bot`, tagged `latest` and with the commit, and pins the deployed compose file to the commit's tag. The package is public, so the server pulls it without logging in.
 
@@ -164,7 +164,7 @@ npm run build
 
 A deploy that changes `deploy/docker-compose.yml` recreates the container, which disconnects everyone on the server for a few seconds. Merge those changes when the server is quiet. A deploy that changes nothing in `deploy/` leaves the container running.
 
-The legacy Discord sync bot in `/opt/ts-disc-control` connects to ServerQuery on `127.0.0.1:10011` and never reconnects on its own. Restart it after any deploy that recreates the container.
+teamspeak-bot reconnects by itself after a deploy recreates the TeamSpeak container. (The legacy Discord sync bot in `/opt/ts-disc-control` on the droplet never reconnected on its own and needed a restart after such a deploy; it was stopped for good at the move to ALEXANDRIA.)
 
 The image is pinned by digest so a deploy never pulls a rebuilt tag and recreates the container by surprise. Upgrading TeamSpeak is a change to the image line: the tag and its digest together. The server upgrades its database on first start and can't go back to an older version, so take a backup first: `backups now teamspeak-server` on the VPS, as `deploy`.
 
