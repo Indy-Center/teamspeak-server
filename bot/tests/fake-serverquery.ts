@@ -19,6 +19,8 @@ export class FakeTeamSpeak {
   unreachable = false;
   /** The next command fails with this error (once). */
   failNextCommand: QueryError | null = null;
+  /** The first command starting with `prefix` fails with `error` (once). */
+  failCommand: { prefix: string; error: QueryError } | null = null;
   /** Every command run, in order, as `name args`. */
   readonly commands: string[] = [];
 
@@ -115,6 +117,11 @@ export class FakeTeamSpeak {
     if (failure) {
       this.failNextCommand = null;
       throw failure;
+    }
+    if (this.failCommand && command.startsWith(this.failCommand.prefix)) {
+      const { error } = this.failCommand;
+      this.failCommand = null;
+      throw error;
     }
     action();
   }

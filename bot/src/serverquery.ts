@@ -39,6 +39,10 @@ export class QueryError extends Error {
   constructor(
     readonly id: string,
     message: string,
+    /** The permission TeamSpeak checked and refused, for error 2568. */
+    readonly failedPermid?: number,
+    /** What the bot was doing, such as `removing group 18`. */
+    readonly during?: string,
   ) {
     super(message);
     this.name = 'QueryError';
