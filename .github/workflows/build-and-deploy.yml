@@ -19,11 +19,37 @@ jobs:
   build-and-deploy:
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push teamspeak-bot's image to ghcr.io
     env:
       # App directory on the VPS: /home/deploy/apps/<repo name>/
       APP: ${{ github.event.repository.name }}
+      BOT_IMAGE: ghcr.io/indy-center/teamspeak-bot
     steps:
       - uses: actions/checkout@v4
+
+      # teamspeak-bot's image is pushed from main only. The package is public, so the VPS pulls it
+      # without logging in.
+      - name: Build and push teamspeak-bot's image
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # The source label links the package to this repository, so it inherits the repo's access.
+          docker build \
+            --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+            -t "$BOT_IMAGE:latest" -t "$BOT_IMAGE:$GITHUB_SHA" bot
+          docker push --all-tags "$BOT_IMAGE"
+
+      # The compose file names :latest; the copy deployed names this build, so a deploy never picks
+      # up another build of the image by surprise.
+      - name: Pin teamspeak-bot's image to this build
+        if: github.ref == 'refs/heads/main'
+        run: |
+          sed -i "s|^\(\s*image: $BOT_IMAGE\):latest$|\1:$GITHUB_SHA|" deploy/docker-compose.yml
+          grep -q "image: $BOT_IMAGE:$GITHUB_SHA$" deploy/docker-compose.yml
 
       - name: Set up SSH
         env:
@@ -50,7 +76,14 @@ jobs:
         run: rsync -rlz --delete --exclude=.env --exclude=.env.example deploy/ "vps:apps/$APP/"
 
       # Writes ~/apps/<app>/.env from the step's ENV_* variables: ENV_<NAME> becomes NAME='value'.
+      # One line per setting in deploy/.env.example, each from where it is kept: a variable (vars.)
+      # or a secret (secrets.). Only teamspeak-bot's service reads the file.
       - name: Write .env
+        env:
+          ENV_QUERY_USER: ${{ vars.ENV_QUERY_USER }}
+          ENV_QUERY_PASSWORD: ${{ secrets.ENV_QUERY_PASSWORD }}
+          ENV_LARRY_URL: ${{ vars.ENV_LARRY_URL }}
+          ENV_LARRY_SECRET: ${{ secrets.ENV_LARRY_SECRET }}
         run: |
           filter=$(cat <<'JQ'
           env | to_entries | sort_by(.key)[]

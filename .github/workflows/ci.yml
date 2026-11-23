@@ -16,14 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # With and without teamspeak-bot's profile.
       - name: Compose file is valid
-        run: docker compose -f deploy/docker-compose.yml config -q
+        run: |
+          docker compose -f deploy/docker-compose.yml config -q
+          docker compose -f deploy/docker-compose.yml --profile bot config -q
 
-      # Includes data-tools.
+      # Includes data-tools. Not teamspeak-bot, whose image is built in the bot job below.
       - name: Images exist
         run: docker compose -f deploy/docker-compose.yml --profile tools pull --quiet
 
-      # Uses the VPS layout, ~/apps/<app>/.
+      # Uses the VPS layout, ~/apps/<app>/. Without the bot profile, so teamspeak-bot isn't started.
       - name: Server starts and stays up
         run: |
           mkdir -p ~/apps
@@ -42,3 +45,27 @@ jobs:
         run: |
           (cd ~/apps/"$APP" && docker compose down -v)
           bash tests/backup-round-trip.sh
+
+  # teamspeak-bot (bot/): its checks and tests, against fakes, then its image.
+  bot:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Image builds
+        working-directory: .
+        run: docker compose -f deploy/docker-compose.yml --profile bot build teamspeak-bot
