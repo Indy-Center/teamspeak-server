@@ -3,10 +3,7 @@ services:
   teamspeak:
     image: teamspeak:3.13.8@sha256:2b3412de8b5ccd93cf131f2be5719e6dbc188e8729705dafa0c59b5debb63c4a
     restart: unless-stopped
-    # Written on the VPS by the deploy from the repo's ENV_* settings.
-    env_file:
-      - path: .env
-        required: false
+    # No env_file: .env holds teamspeak-bot's settings, which TeamSpeak must not see.
     environment:
       TS3SERVER_LICENSE: accept
       TS3SERVER_IP_ALLOWLIST: /etc/ts3server/query_ip_allowlist.txt
@@ -20,6 +17,30 @@ services:
     networks:
       teamspeak:
         ipv4_address: 172.30.10.10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  # Applies larry's TeamSpeak jobs over ServerQuery (bot/). Only started with the `bot` profile, which
+  # only ALEXANDRIA's deploy turns on: it must never run against the droplet's server.
+  teamspeak-bot:
+    # On main, the deploy pushes this image and pins this line to the build's commit.
+    image: ghcr.io/indy-center/teamspeak-bot:latest
+    build: ../bot
+    profiles: [bot]
+    restart: unless-stopped
+    init: true # forwards stop signals so the container shuts down promptly
+    # Written on the VPS by the deploy from the repo's ENV_* settings; .env.example lists them.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      QUERY_HOST: teamspeak
+      QUERY_PORT: "10011"
+    networks:
+      - teamspeak
     logging:
       driver: json-file
       options:
