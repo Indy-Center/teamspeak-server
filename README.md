@@ -108,9 +108,11 @@ teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds n
 **Jobs**, as JSON:
 
 - `{ jobId, type: "set-groups", uid, add: number[], remove: number[] }`: adds the client with that unique ID to the server groups in `add` and takes it out of those in `remove`; other groups are left alone. A group the client already has, or no longer has, counts as done. Answered `applied` and acked. A UID the server doesn't know is answered `failed` with `error: "unknown uid"` and acked, since a retry can't help. Any other ServerQuery error is answered `failed` with the error, and retried.
+  - A job whose `add` or `remove` names an admin group (1 Guest Server Query, 2 Admin Server Query, 6 Server Admin, 8 Guest, 27 the bot's own) is refused before any ServerQuery command: answered `failed` with `error: "admin group <id>"` and acked. The list is `ADMIN_GROUPS` in `bot/src/jobs.ts`, the same as larry's.
+- `{ jobId, type: "report-accounts", groups: number[] }`: answered with one `accounts` result and acked. `holders` is every client in the client database holding at least one of `groups`, once each, with all its server groups; `connected` is the UIDs connected now, query clients excluded. A ServerQuery error is answered `failed` and retried.
 - A job type the bot doesn't know is answered `failed` (`unknown job type: <type>`) and retried.
 
-**Results**, as JSON: `{ type: "applied", jobId }`, `{ type: "failed", jobId, error? }`, `{ type: "heartbeat", at }` and `{ type: "reconnected", at }`, where `at` is an ISO 8601 time. The job and result shapes are in `bot/src/teamspeak-shape.ts`, a copy of indy-larry's `worker/src/teamspeak-shape.ts`: there is no shared package, so a change to one is made to the other.
+**Results**, as JSON: `{ type: "applied", jobId }`, `{ type: "failed", jobId, error? }`, `{ type: "heartbeat", at }` and `{ type: "reconnected", at }` and `{ type: "accounts", holders: { uid, groups: number[] }[], connected: string[] }`, where `at` is an ISO 8601 time. The job and result shapes are in `bot/src/teamspeak-shape.ts`, a copy of indy-larry's `worker/src/teamspeak-shape.ts`: there is no shared package, so a change to one is made to the other.
 
 **When things fail**, it retries rather than exiting, so a deploy never sees it restart:
 

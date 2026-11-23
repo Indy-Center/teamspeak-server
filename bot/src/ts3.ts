@@ -1,7 +1,10 @@
 import { QueryProtocol, ResponseError, TeamSpeak } from 'ts3-nodejs-library';
+import type { TeamSpeakQuery } from 'ts3-nodejs-library/lib/transport/TeamSpeakQuery.js';
 import type { Log } from './bot.js';
-import { QueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
+import { QUERY_ERRORS, QueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
 
+/** `client_type` of a query client; a regular client is 0. */
+const QUERY_CLIENT_TYPE = '1';
 /** The virtual server the bot works on. */
 const VIRTUAL_SERVER = '1';
 /** How long connecting, or one command, may take before the connection is given up as broken. */
@@ -68,6 +71,24 @@ function session(teamspeak: TeamSpeak): QuerySession {
     },
     async removeServerGroup(databaseId, group) {
       await run(() => teamspeak.serverGroupDelClient(databaseId, String(group)));
+    },
+    async groupMembers(group) {
+      try {
+        const members = await run(() => teamspeak.serverGroupClientList(String(group)));
+        return members.map((member) => ({ uid: member.clientUniqueIdentifier, databaseId: member.cldbid }));
+      } catch (error) {
+        // TeamSpeak answers an empty group with "empty result set".
+        if (error instanceof QueryError && error.id === QUERY_ERRORS.emptyResult) return [];
+        throw error;
+      }
+    },
+    async groupsOfClient(databaseId) {
+      const groups = await run(() => teamspeak.serverGroupsByClientId(databaseId));
+      return groups.map((entry) => Number(entry.sgid));
+    },
+    async connectedUids() {
+      const clients = await run(() => teamspeak.execute<TeamSpeakQuery.Response>('clientlist', ['-uid']));
+      return [clients].flat().filter((client) => String(client['clientType']) !== QUERY_CLIENT_TYPE).map((client) => String(client['clientUniqueIdentifier']));
     },
     onClose(listener) {
       teamspeak.once('close', () => listener());

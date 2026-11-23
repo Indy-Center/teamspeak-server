@@ -28,6 +28,19 @@ const answer: Answer = (name, args, positional) => {
       return args['sgid'] === '10' ? ['error id=2561 msg=duplicate\\sentry'] : [OK];
     case 'servergroupdelclient':
       return [OK];
+    case 'servergroupclientlist':
+      if (args['sgid'] === '5') return ['error id=1281 msg=database\\sempty\\sresult\\sset'];
+      return [
+        `cldbid=41 client_nickname=Alpha client_unique_identifier=${UID.replace(/\//g, '\\/')}|cldbid=42 client_nickname=Bravo client_unique_identifier=FakeUidBravo\\/BBBBBBBBBBB=`,
+        OK,
+      ];
+    case 'servergroupsbyclientid':
+      return ['name=Member sgid=7 cldbid=41|name=Guest sgid=8 cldbid=41', OK];
+    case 'clientlist':
+      return [
+        `clid=1 cid=1 client_database_id=41 client_type=0 client_unique_identifier=${UID.replace(/\//g, '\\/')}|clid=2 cid=1 client_database_id=1 client_type=1 client_unique_identifier=FakeQueryQQQQQQQQQQQQQQ=`,
+        OK,
+      ];
     default:
       return ['error id=256 msg=command\\snot\\sfound'];
   }
@@ -83,6 +96,17 @@ describe('ts3Connector', () => {
       'servergroupdelclient sgid=9 cldbid=41',
       'servergroupaddclient sgid=10 cldbid=41',
     ]);
+  });
+
+  it('lists the members of a group, the groups of a client and the connected non-query clients', async () => {
+    session = await connect();
+    expect(await session.groupMembers(7)).toEqual([
+      { uid: UID, databaseId: '41' },
+      { uid: 'FakeUidBravo/BBBBBBBBBBB=', databaseId: '42' },
+    ]);
+    expect(await session.groupMembers(5)).toEqual([]);
+    expect(await session.groupsOfClient('41')).toEqual([7, 8]);
+    expect(await session.connectedUids()).toEqual([UID]);
   });
 
   it('tells the bot when the server closes the connection', async () => {

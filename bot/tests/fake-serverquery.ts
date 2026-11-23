@@ -26,6 +26,19 @@ export class FakeTeamSpeak {
     this.clients.set(uid, { databaseId, groups: new Set(groups) });
   }
 
+  /** Marks a known client as connected now. */
+  connectClient(uid: string): void {
+    this.online.push({ uid, query: false });
+  }
+
+  /** A query client connected now (it has no database entry the sync cares about). */
+  connectQueryClient(uid: string): void {
+    this.online.push({ uid, query: true });
+  }
+
+  /** @internal */
+  readonly online: { uid: string; query: boolean }[] = [];
+
   groupsOf(uid: string): number[] {
     return [...(this.clients.get(uid)?.groups ?? [])].sort((a, b) => a - b);
   }
@@ -74,6 +87,11 @@ export class FakeTeamSpeak {
   }
 
   /** @internal */
+  members(group: number): { uid: string; databaseId: string }[] {
+    return [...this.clients].filter(([, client]) => client.groups.has(group)).map(([uid, client]) => ({ uid, databaseId: client.databaseId }));
+  }
+
+  /** @internal */
   byDatabaseId(databaseId: string): Client {
     for (const client of this.clients.values()) if (client.databaseId === databaseId) return client;
     throw new QueryError(QUERY_ERRORS.emptyResult, 'database empty result set');
@@ -113,6 +131,30 @@ class FakeSession implements QuerySession {
       if (!client.groups.has(group)) throw new QueryError(QUERY_ERRORS.notInGroup, 'empty result set');
       client.groups.delete(group);
     });
+  }
+
+  async groupMembers(group: number): Promise<{ uid: string; databaseId: string }[]> {
+    let members: { uid: string; databaseId: string }[] = [];
+    this.server.run(this, `servergroupclientlist ${group}`, () => {
+      members = this.server.members(group);
+    });
+    return members;
+  }
+
+  async groupsOfClient(databaseId: string): Promise<number[]> {
+    let groups: number[] = [];
+    this.server.run(this, `servergroupsbyclientid ${databaseId}`, () => {
+      groups = [...this.server.byDatabaseId(databaseId).groups].sort((a, b) => a - b);
+    });
+    return groups;
+  }
+
+  async connectedUids(): Promise<string[]> {
+    let uids: string[] = [];
+    this.server.run(this, 'clientlist', () => {
+      uids = this.server.online.filter((client) => !client.query).map((client) => client.uid);
+    });
+    return uids;
   }
 
   onClose(listener: () => void): void {

@@ -1,6 +1,13 @@
 import { QUERY_ERRORS, QueryError, isQueryError, type QuerySession } from './serverquery.js';
 import type { TsJob, TsResult } from './teamspeak-shape.js';
 
+/**
+ * Server groups the sync never touches: 1 Guest Server Query, 2 Admin Server Query, 6 Server Admin,
+ * 8 Guest (the default group) and 27 teamspeak-bot's own. The same list as indy-larry's `ADMIN_GROUPS`
+ * (`worker/src/mapping.ts`), which refuses them in the mapping; this is the second guard.
+ */
+export const ADMIN_GROUPS: readonly number[] = [1, 2, 6, 8, 27];
+
 /** What happens to a job once it has been tried: acked (done for good) or retried, and its result. */
 export type Outcome = { jobId: string; ack: boolean; result: TsResult };
 
@@ -15,6 +22,8 @@ export async function applyJob(session: QuerySession, job: TsJob): Promise<Outco
     switch (job.type) {
       case 'set-groups':
         return (await setGroups(session, job)) ?? { jobId, ack: true, result: { type: 'applied', jobId } };
+      case 'report-accounts':
+        return { jobId, ack: true, result: await reportAccounts(session, job.groups) };
       default:
         return retry(jobId, `unknown job type: ${(job as { type: unknown }).type}`);
     }
@@ -24,6 +33,11 @@ export async function applyJob(session: QuerySession, job: TsJob): Promise<Outco
 }
 
 async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set-groups' }>): Promise<Outcome | undefined> {
+  // The sync never touches an admin group, whatever larry asks.
+  const admin = [...job.add, ...job.remove].find((group) => ADMIN_GROUPS.includes(group));
+  if (admin !== undefined) {
+    return { jobId: job.jobId, ack: true, result: { type: 'failed', jobId: job.jobId, error: `admin group ${admin}` } };
+  }
   let databaseId: string;
   try {
     databaseId = await session.databaseId(job.uid);
@@ -41,6 +55,19 @@ async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set
     await tolerate(session.removeServerGroup(databaseId, group), QUERY_ERRORS.notInGroup);
   }
   return undefined;
+}
+
+/** Every client holding one of `groups`, with all its groups, and who is connected now. */
+async function reportAccounts(session: QuerySession, groups: number[]): Promise<TsResult> {
+  const clients = new Map<string, string>(); // database ID -> UID
+  for (const group of groups) {
+    for (const member of await session.groupMembers(group)) clients.set(member.databaseId, member.uid);
+  }
+  const holders: { uid: string; groups: number[] }[] = [];
+  for (const [databaseId, uid] of clients) {
+    holders.push({ uid, groups: await session.groupsOfClient(databaseId) });
+  }
+  return { type: 'accounts', holders, connected: await session.connectedUids() };
 }
 
 async function tolerate(command: Promise<void>, errorId: string): Promise<void> {

@@ -10,6 +10,12 @@ export interface QuerySession {
   addServerGroup(databaseId: string, group: number): Promise<void>;
   /** `servergroupdelclient`. */
   removeServerGroup(databaseId: string, group: number): Promise<void>;
+  /** `servergroupclientlist -names`: the clients holding a server group (none for an empty group). */
+  groupMembers(group: number): Promise<{ uid: string; databaseId: string }[]>;
+  /** `servergroupsbyclientid`: the IDs of every server group a client holds. */
+  groupsOfClient(databaseId: string): Promise<number[]>;
+  /** `clientlist -uid`: the UIDs connected now, query clients excluded. */
+  connectedUids(): Promise<string[]>;
   /** Called once when the connection is lost, or closed by `quit`. */
   onClose(listener: () => void): void;
   /** Logs out and closes the connection. */

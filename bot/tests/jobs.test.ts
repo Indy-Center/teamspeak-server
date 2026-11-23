@@ -137,6 +137,77 @@ describe('set-groups', () => {
   });
 });
 
+describe('admin groups', () => {
+  it.each([
+    ['add', { add: [10, 6], remove: [] }, 6],
+    ['remove', { add: [10], remove: [27] }, 27],
+    ['add of the query group', { add: [1], remove: [] }, 1],
+  ])('refuses a set-groups job touching an admin group (%s), fails it and acks it', async (_name, change, group) => {
+    teamspeak.addClient(UID, '41', [7]);
+    larry.enqueue({ jobId: 'job-1', type: 'set-groups', uid: UID, ...change });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(larry.results).toEqual([{ type: 'failed', jobId: 'job-1', error: `admin group ${group}` }]);
+    expect(larry.acked).toEqual(['job-1']);
+    expect(larry.retried).toEqual([]);
+    expect(teamspeak.groupsOf(UID)).toEqual([7]);
+    expect(teamspeak.commands).toEqual([]);
+  });
+});
+
+describe('report-accounts', () => {
+  const THIRD_UID = 'FakeUidCharlieCCCCCCCCCCCC=';
+  const FOURTH_UID = 'FakeUidDeltaDDDDDDDDDDDDDD=';
+
+  it('answers with the holders of the named groups, all their groups, and who is connected', async () => {
+    teamspeak.addClient(UID, '41', [7, 12, 8]);
+    teamspeak.addClient(OTHER_UID, '42', [12]);
+    teamspeak.addClient(THIRD_UID, '43', [99]); // holds no named group
+    teamspeak.addClient(FOURTH_UID, '44', [7, 12]); // holds two named groups: listed once
+    teamspeak.connectClient(UID);
+    teamspeak.connectClient(THIRD_UID);
+    teamspeak.connectQueryClient('FakeQueryClientQQQQQQQQQQ=');
+    larry.enqueue({ jobId: 'job-1', type: 'report-accounts', groups: [7, 12, 50] });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(larry.results).toHaveLength(1);
+    const [result] = larry.results;
+    expect(result).toMatchObject({ type: 'accounts', connected: [UID, THIRD_UID] });
+    const holders = result?.type === 'accounts' ? result.holders : [];
+    expect(holders).toHaveLength(3);
+    expect(holders).toEqual(
+      expect.arrayContaining([
+        { uid: UID, groups: [7, 8, 12] },
+        { uid: OTHER_UID, groups: [12] },
+        { uid: FOURTH_UID, groups: [7, 12] },
+      ]),
+    );
+    expect(larry.acked).toEqual(['job-1']);
+  });
+
+  it('answers with no holders when nobody holds the groups', async () => {
+    larry.enqueue({ jobId: 'job-1', type: 'report-accounts', groups: [7] });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(larry.results).toEqual([{ type: 'accounts', holders: [], connected: [] }]);
+    expect(larry.acked).toEqual(['job-1']);
+  });
+
+  it('asks for a retry when ServerQuery fails part-way', async () => {
+    teamspeak.addClient(UID, '41', [7]);
+    teamspeak.failNextCommand = new QueryError('2568', 'insufficient client permissions');
+    larry.enqueue({ jobId: 'job-1', type: 'report-accounts', groups: [7] });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(larry.retried).toEqual(['job-1']);
+    expect(larry.results[0]).toMatchObject({ type: 'failed', jobId: 'job-1' });
+  });
+});
+
 describe('polling', () => {
   it('pulls again at once after jobs came back, and every 5 seconds when none did', async () => {
     teamspeak.addClient(UID, '41');
