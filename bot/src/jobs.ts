@@ -39,14 +39,14 @@ async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set
   // The sync never touches an admin group, whatever larry asks.
   const admin = [...job.add, ...job.remove].find((group) => ADMIN_GROUPS.includes(group));
   if (admin !== undefined) {
-    return { jobId: job.jobId, ack: true, result: { type: 'failed', jobId: job.jobId, error: `admin group ${admin}` } };
+    return giveUp(job.jobId, `admin group ${admin}`);
   }
   let databaseId: string;
   try {
     databaseId = await session.databaseId(job.uid);
   } catch (error) {
     if (isQueryError(error, QUERY_ERRORS.emptyResult)) {
-      return { jobId: job.jobId, ack: true, result: { type: 'failed', jobId: job.jobId, error: 'unknown uid' } };
+      return giveUp(job.jobId, 'unknown uid');
     }
     throw error;
   }
@@ -67,13 +67,13 @@ async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set
  */
 async function sendText(session: QuerySession, job: Extract<TsJob, { type: 'send-text' }>): Promise<Outcome> {
   const { jobId } = job;
-  if (typeof job.uid !== 'string' || job.uid === '') return { jobId, ack: true, result: { type: 'failed', jobId, error: 'no uid' } };
+  if (typeof job.uid !== 'string' || job.uid === '') return giveUp(jobId, 'no uid');
   let sent = 0;
   for (const clientId of await session.clientIds(job.uid)) {
     // A client that left between the lookup and the message is skipped.
     if (await tolerate(session.sendText(clientId, job.text), QUERY_ERRORS.invalidClientId)) sent += 1;
   }
-  if (sent === 0) return { jobId, ack: true, result: { type: 'failed', jobId, error: 'not connected' } };
+  if (sent === 0) return giveUp(jobId, 'not connected');
   return { jobId, ack: true, result: { type: 'applied', jobId } };
 }
 
@@ -99,6 +99,11 @@ async function tolerate(command: Promise<void>, errorId: string): Promise<boolea
     if (!isQueryError(error, errorId)) throw error;
     return false;
   }
+}
+
+/** A `failed` job acked for good, since trying again can't help. */
+function giveUp(jobId: string, error: string): Outcome {
+  return { jobId, ack: true, result: { type: 'failed', jobId, error } };
 }
 
 function retry(jobId: string, error: string): Outcome {

@@ -1,7 +1,7 @@
 import { QueryProtocol, ResponseError, TeamSpeak } from 'ts3-nodejs-library';
 import type { TeamSpeakQuery } from 'ts3-nodejs-library/lib/transport/TeamSpeakQuery.js';
 import type { Log } from './bot.js';
-import { QUERY_ERRORS, QueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
+import { QUERY_ERRORS, QueryError, isQueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
 
 /** `client_type` of a query client; a regular client is 0. */
 const QUERY_CLIENT_TYPE = '1';
@@ -100,7 +100,7 @@ function session(teamspeak: TeamSpeak): QuerySession {
         return clients.map((client) => Number(client.clid));
       } catch (error) {
         // TeamSpeak answers a UID no client holds with "database empty result set".
-        if (error instanceof QueryError && error.id === QUERY_ERRORS.emptyResult) return [];
+        if (isQueryError(error, QUERY_ERRORS.emptyResult)) return [];
         throw error;
       }
     },

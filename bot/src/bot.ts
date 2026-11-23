@@ -170,7 +170,7 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
     let failure: unknown;
     try {
       await larry.postResults(sending);
-      take(sending);
+      removeFromOutbox(sending);
     } catch (error) {
       if (!isRefused(error)) failure = error;
       else if (sending.length === 1) drop(sending[0]!, error);
@@ -200,7 +200,7 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
     for (const result of results) {
       try {
         await larry.postResults([result]);
-        take([result]);
+        removeFromOutbox([result]);
       } catch (error) {
         if (!isRefused(error)) return error;
         drop(result, error);
@@ -209,14 +209,14 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
     return undefined;
   }
 
-  function take(results: TsResult[]): void {
+  function removeFromOutbox(results: TsResult[]): void {
     outbox = outbox.filter((waiting) => !results.includes(waiting));
   }
 
   function drop(result: TsResult, error: unknown): void {
     // The result itself isn't logged: it may hold a UID.
     log(`larry refused a ${result.type} result; dropped it (${describeError(error)})`);
-    take([result]);
+    removeFromOutbox([result]);
   }
 
   const heartbeat = setInterval(() => report({ type: 'heartbeat', at: now().toISOString() }), HEARTBEAT_MS);
