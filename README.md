@@ -22,13 +22,14 @@ This is the one app on the VPS that publishes ports on the host instead of going
 ## Project layout
 
 - `deploy/`: everything deployed to `/home/deploy/apps/teamspeak-server/` on the VPS, and nothing else.
-  - `docker-compose.yml`: the TeamSpeak service, its published ports, the `ts3-data` volume and its own network. Also `data-tools`, which never runs on its own: the backup scripts start it as a throwaway container to read and write the volume. The deploy pulls it, so it is on the VPS before the first backup.
+  - `docker-compose.yml`: the TeamSpeak service, its published ports, the `ts3-data` volume and its own network. Also `data-tools`, which never runs on its own: the backup scripts start it as a throwaway container to read and write the volume. The deploy pulls it, so it is on the VPS before the first backup. And `teamspeak-bot`, behind the `bot` profile (see [teamspeak-bot](#teamspeak-bot)).
   - `backup.sh` and `restore.sh`: the backup recipe and its reverse (see [Backups](#backups)).
   - `query_ip_allowlist.txt`: addresses exempt from ServerQuery flood limits: loopback and the compose network. It is mounted at `/etc/ts3server/`, outside the data directory, because the image's entrypoint changes the owner of everything under `/var/ts3server` and fails on a read-only file there.
-  - `.env.example`: the runtime settings the deploy writes to `.env`. None yet.
+  - `.env.example`: the runtime settings the deploy writes to `.env`: teamspeak-bot's four. Only the bot's service loads `.env`; TeamSpeak's names what it needs in the compose file, so the bot's secret and query password never reach the TeamSpeak container.
+- `bot/`: teamspeak-bot, a Node 22 and TypeScript project with its own Dockerfile (see [teamspeak-bot](#teamspeak-bot)).
 - `tests/backup-round-trip.sh`: proves a backup restores as the same server. CI runs it.
-- `.github/workflows/ci.yml`: checks the compose file, pulls the images, starts the server on the runner to see it stay up, then runs the backup round trip.
-- `.github/workflows/build-and-deploy.yml`: runs CI, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
+- `.github/workflows/ci.yml`: checks the compose file with and without the `bot` profile, pulls the images, starts the server on the runner to see it stay up (without the bot), then runs the backup round trip. A second job runs teamspeak-bot's typecheck, tests and build, and builds its image.
+- `.github/workflows/build-and-deploy.yml`: runs CI, then on `main` builds and pushes teamspeak-bot's image, rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
 
 ## Data
 
@@ -88,6 +89,74 @@ docker compose -f deploy/docker-compose.yml up
 ```
 
 This starts a fresh server with an empty database. The log prints a `serveradmin` password and a privilege key once; connect a TeamSpeak client to `localhost` and paste the key to become server admin. `docker compose -f deploy/docker-compose.yml down -v` throws the server and its data away.
+
+## teamspeak-bot
+
+teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds no logic about who gets what: larry's Worker decides, queues TeamSpeak jobs, and the bot pulls them, applies them over ServerQuery and reports back. It keeps nothing of its own, so it has no volume and nothing to back up.
+
+**What it does:**
+
+- Connects to ServerQuery at `teamspeak:10011` on the compose network (the query allowlist covers the subnet), logs in with its own ServerQuery account and selects virtual server 1.
+- Calls larry's Worker at `LARRY_URL`, sending `Authorization: Bearer <LARRY_SECRET>` on each call:
+  - `POST /teamspeak/jobs/pull` with `{ "max": 10 }`, answered `200 { "jobs": [...] }`. Each job is leased to the bot for 60 seconds.
+  - `POST /teamspeak/results`, a list of results, answered `202`.
+  - `POST /teamspeak/jobs/ack` with `{ "acks": [jobId], "retries": [jobId] }`, answered `204`, after the results. larry moves a job to its dead-letter table after 5 tries.
+- Pulls again at once when jobs came back, every 5 seconds when none did, and 5 seconds after any retry (larry hands a retried job out again straight away).
+- Sends `heartbeat` every 5 minutes.
+- Subscribes to client-enter events on each ServerQuery connection, including every reconnection, and sends `client-connected` for each client that enters, query clients excluded. It never sends a message of its own accord: the text comes from larry's `send-text` job.
+- Logs to stdout only. It logs job IDs and outcomes, never UIDs or settings' values.
+
+**Jobs**, as JSON:
+
+- `{ jobId, type: "set-groups", uid, add: number[], remove: number[] }`: adds the client with that unique ID to the server groups in `add` and takes it out of those in `remove`; other groups are left alone. A group the client already has, or no longer has, counts as done. Answered `applied` and acked. A UID the server doesn't know is answered `failed` with `error: "unknown uid"` and acked, since a retry can't help. Any other ServerQuery error is answered `failed` with the error, and retried.
+  - A job whose `add` or `remove` names an admin group (1 Guest Server Query, 2 Admin Server Query, 6 Server Admin, 8 Guest, 27 the bot's own) is refused before any ServerQuery command: answered `failed` with `error: "admin group <id>"` and acked. The list is `ADMIN_GROUPS` in `bot/src/jobs.ts`, the same as larry's.
+- `{ jobId, type: "report-accounts", groups: number[] }`: answered with one `accounts` result and acked. `holders` is every client in the client database holding at least one of `groups`, once each, with all its server groups; `connected` is the UIDs connected now, query clients excluded. A ServerQuery error is answered `failed` and retried.
+- `{ jobId, type: "send-text", clientId, text }`: sends `text` to the client with that client ID (`clid`, from its `client-connected` result) as a private message. Answered `applied` and acked. A ServerQuery error (a client that has left, say) is answered `failed` and retried.
+- A job type the bot doesn't know is answered `failed` (`unknown job type: <type>`) and retried.
+
+**Results**, as JSON: `{ type: "applied", jobId }`, `{ type: "failed", jobId, error? }`, `{ type: "heartbeat", at }`, `{ type: "reconnected", at }`, `{ type: "accounts", holders: { uid, groups: number[] }[], connected: string[] }` and `{ type: "client-connected", uid, clientId, nickname }`, where `at` is an ISO 8601 time. The job and result shapes are in `bot/src/teamspeak-shape.ts`, a copy of indy-larry's `worker/src/teamspeak-shape.ts`: there is no shared package, so a change to one is made to the other.
+
+**When things fail**, it retries rather than exiting, so a deploy never sees it restart:
+
+- ServerQuery refused or unreachable, at start-up or later: tries again after 1 second, doubling to 60. After a lost connection it reconnects the same way, then sends `reconnected`, on which larry runs a full sync. A ServerQuery command with no answer for 30 seconds closes the connection and reconnects. No job is pulled while it is disconnected.
+- larry unreachable, or answering anything but what the route promises: backs off the same way, keeping its ServerQuery connection. A job whose results or ack don't reach larry isn't acked, so larry hands it out again when its lease runs out. A `heartbeat`, `reconnected` or `client-connected` that doesn't reach larry is sent again until it does (only the latest heartbeat is kept).
+- A missing setting stops it at start with a message naming the setting. That is the one case it exits.
+
+`restore.sh` stops and starts only the `teamspeak` service, so the bot keeps running through a restore and reports `reconnected` once TeamSpeak is back.
+
+**Settings**, in `.env` (`deploy/.env.example` lists them). The deploy writes them from teamspeak-server's GitHub settings, stripping `ENV_`:
+
+| Setting | GitHub setting | What it is |
+| ------- | -------------- | ---------- |
+| `QUERY_USER` | variable `ENV_QUERY_USER` | The bot's own ServerQuery login: it can set server groups and send messages, and can't administer the server |
+| `QUERY_PASSWORD` | secret `ENV_QUERY_PASSWORD` | That login's password |
+| `LARRY_URL` | variable `ENV_LARRY_URL` | larry's Worker, e.g. `https://<worker>.workers.dev` |
+| `LARRY_SECRET` | secret `ENV_LARRY_SECRET` | The secret larry's teamspeak-bot routes check: the same value as indy-larry's `ENV_TEAMSPEAK_BOT_SECRET` |
+
+`QUERY_HOST` and `QUERY_PORT` are set in the compose file (`teamspeak` and `10011`).
+
+**The `bot` profile.** The service only starts with `--profile bot`, which the deploy doesn't pass, and neither does CI. Until TeamSpeak moves to ALEXANDRIA, a push to `main` deploys to the droplet, and the bot must never run against the live server there; the move turns the profile on in the deploy.
+
+**The image.** CI builds it on every pull request. On `main`, the deploy pushes it to `ghcr.io/indy-center/teamspeak-bot`, tagged `latest` and with the commit, and pins the deployed compose file to the commit's tag. The package is public, so the server pulls it without logging in.
+
+**Working on it:**
+
+```bash
+cd bot
+npm ci
+npm run typecheck
+npm test        # against a fake ServerQuery and a fake larry; no TeamSpeak needed
+npm run build
+```
+
+**Against a local TeamSpeak** (on an x86 machine: the TeamSpeak image is x86 only):
+
+1. Start the server: `docker compose -f deploy/docker-compose.yml up -d teamspeak`, and read the `serveradmin` password from `docker compose -f deploy/docker-compose.yml logs teamspeak`.
+2. Run larry's Worker locally (`npx wrangler dev` in indy-larry's `worker/`, with `TEAMSPEAK_BOT_SECRET` in its `.dev.vars`), at an address the bot's container can reach, such as the host's own address.
+3. Write `deploy/.env`, which git ignores: `QUERY_USER=serveradmin`, `QUERY_PASSWORD=<from the log>`, `LARRY_URL=<the Worker's address>` and `LARRY_SECRET=<the same secret>`.
+4. `docker compose -f deploy/docker-compose.yml --profile bot up --build`. The bot logs `ServerQuery connected`, then each job it applies.
+
+`docker compose -f deploy/docker-compose.yml --profile bot down -v` throws it all away, `deploy/.env` aside.
 
 ## Deployment
 
