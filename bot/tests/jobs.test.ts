@@ -209,27 +209,70 @@ describe('report-accounts', () => {
 });
 
 describe('send-text', () => {
-  it('sends the text to the client as a private message, then applied and an ack', async () => {
-    start();
-    await vi.advanceTimersByTimeAsync(0);
-    const clientId = teamspeak.enterClient(UID, 'Alpha');
-    larry.results.length = 0;
-    larry.enqueue({ jobId: 'job-1', type: 'send-text', clientId, text: 'Link: https://example.test/profile?ts=fake-token' });
-    await vi.advanceTimersByTimeAsync(5_100);
+  const TEXT = 'Link: https://example.test/profile?ts=fake-token';
 
-    expect(teamspeak.messages).toEqual([{ clientId, text: 'Link: https://example.test/profile?ts=fake-token' }]);
+  it('sends the text as a private message to every client holding the UID, then applied and an ack', async () => {
+    const first = teamspeak.enterClient(UID, 'Alpha');
+    const second = teamspeak.enterClient(UID, 'Alpha on a laptop');
+    teamspeak.enterClient(OTHER_UID, 'Bravo');
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', uid: UID, text: TEXT });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(teamspeak.messages).toEqual([
+      { clientId: first, text: TEXT },
+      { clientId: second, text: TEXT },
+    ]);
     expect(larry.results).toEqual([{ type: 'applied', jobId: 'job-1' }]);
     expect(larry.acked).toEqual(['job-1']);
   });
 
-  it('asks for a retry when TeamSpeak refuses the message', async () => {
-    larry.enqueue({ jobId: 'job-1', type: 'send-text', clientId: 99, text: 'Hello' });
+  it('sends nothing to a client ID TeamSpeak has since handed to another UID', async () => {
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    teamspeak.leaveClient(clientId);
+    teamspeak.enterClient(OTHER_UID, 'Bravo', { clientId });
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', uid: UID, text: TEXT });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(teamspeak.messages).toEqual([]);
+    expect(larry.results).toEqual([{ type: 'failed', jobId: 'job-1', error: 'not connected' }]);
+  });
+
+  it('fails a UID no client holds with "not connected" and acks it rather than retrying', async () => {
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', uid: UID, text: TEXT });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(teamspeak.messages).toEqual([]);
+    expect(larry.results).toEqual([{ type: 'failed', jobId: 'job-1', error: 'not connected' }]);
+    expect(larry.acked).toEqual(['job-1']);
+    expect(larry.retried).toEqual([]);
+  });
+
+  it('fails a job with no uid (the old shape) with "no uid" and acks it, sending nothing', async () => {
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', clientId, text: TEXT } as never);
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(teamspeak.messages).toEqual([]);
+    expect(teamspeak.commands).toEqual([]);
+    expect(larry.results).toEqual([{ type: 'failed', jobId: 'job-1', error: 'no uid' }]);
+    expect(larry.acked).toEqual(['job-1']);
+    expect(larry.retried).toEqual([]);
+  });
+
+  it('asks for a retry when ServerQuery refuses the lookup', async () => {
+    teamspeak.enterClient(UID, 'Alpha');
+    teamspeak.failNextCommand = new QueryError('2568', 'insufficient client permissions');
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', uid: UID, text: TEXT });
     start();
     await vi.advanceTimersByTimeAsync(100);
 
     expect(teamspeak.messages).toEqual([]);
     expect(larry.retried).toEqual(['job-1']);
-    expect(larry.results[0]).toMatchObject({ type: 'failed', jobId: 'job-1', error: 'ServerQuery error 512: invalid clientID' });
+    expect(larry.results[0]).toMatchObject({ type: 'failed', jobId: 'job-1', error: 'ServerQuery error 2568: insufficient client permissions' });
   });
 });
 

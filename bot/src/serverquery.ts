@@ -16,6 +16,8 @@ export interface QuerySession {
   groupsOfClient(databaseId: string): Promise<number[]>;
   /** `clientlist -uid`: the UIDs connected now, query clients excluded. */
   connectedUids(): Promise<string[]>;
+  /** `clientgetids`: the IDs (`clid`) of the clients connected now holding a UID; none if it isn't connected. */
+  clientIds(uid: string): Promise<number[]>;
   /** `sendtextmessage` in client mode: a private message to the client with this ID (`clid`). */
   sendText(clientId: number, text: string): Promise<void>;
   /**
@@ -51,6 +53,8 @@ export const QUERY_ERRORS = {
   duplicateEntry: '2561',
   /** `empty result set` (permissions): `servergroupdelclient` for a client not in the group. */
   notInGroup: '2563',
+  /** `invalid clientID`: `sendtextmessage` to a client ID no client holds. */
+  invalidClientId: '512',
 } as const;
 
 export function isQueryError(error: unknown, id: string): boolean {

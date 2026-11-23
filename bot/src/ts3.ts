@@ -1,7 +1,7 @@
 import { QueryProtocol, ResponseError, TeamSpeak } from 'ts3-nodejs-library';
 import type { TeamSpeakQuery } from 'ts3-nodejs-library/lib/transport/TeamSpeakQuery.js';
 import type { Log } from './bot.js';
-import { QUERY_ERRORS, QueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
+import { QUERY_ERRORS, QueryError, isQueryError, type ConnectQuery, type QuerySession } from './serverquery.js';
 
 /** `client_type` of a query client; a regular client is 0. */
 const QUERY_CLIENT_TYPE = '1';
@@ -93,6 +93,16 @@ function session(teamspeak: TeamSpeak): QuerySession {
     async connectedUids() {
       const clients = await run(() => teamspeak.execute<TeamSpeakQuery.Response>('clientlist', ['-uid']));
       return [clients].flat().filter((client) => String(client['clientType']) !== QUERY_CLIENT_TYPE).map((client) => String(client['clientUniqueIdentifier']));
+    },
+    async clientIds(uid) {
+      try {
+        const clients = await run(() => teamspeak.clientGetIds(uid));
+        return clients.map((client) => Number(client.clid));
+      } catch (error) {
+        // TeamSpeak answers a UID no client holds with "database empty result set".
+        if (isQueryError(error, QUERY_ERRORS.emptyResult)) return [];
+        throw error;
+      }
     },
     async sendText(clientId, text) {
       await run(() => teamspeak.execute('sendtextmessage', { target: String(clientId), targetmode: TEXT_TO_CLIENT, msg: text }));

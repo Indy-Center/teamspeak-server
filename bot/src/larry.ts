@@ -6,13 +6,24 @@ export interface Larry {
   pull(max: number): Promise<TsJob[]>;
   /** `POST /teamspeak/jobs/ack` `{ acks, retries }` → `204`. */
   ack(acks: string[], retries: string[]): Promise<void>;
-  /** `POST /teamspeak/results`, a list of results → `202`. */
+  /** `POST /teamspeak/results`, a list of results → `202`; `400`, queuing none, if any one is invalid. */
   postResults(results: TsResult[]): Promise<void>;
 }
 
-/** larry couldn't be reached, or didn't answer as its route promises. */
+/** larry couldn't be reached, or didn't answer as its route promises (`status`, when it answered). */
 export class LarryError extends Error {
   override name = 'LarryError';
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** larry answered 400: it refuses the body as it is, so sending it again can't help. */
+export function isRefused(error: unknown): boolean {
+  return error instanceof LarryError && error.status === 400;
 }
 
 export function createLarry(options: { url: string; secret: string; fetch?: typeof fetch }): Larry {
@@ -33,7 +44,7 @@ export function createLarry(options: { url: string; secret: string; fetch?: type
     }
     if (response.status !== expected) {
       await response.body?.cancel();
-      throw new LarryError(`POST ${path} answered ${response.status}`);
+      throw new LarryError(`POST ${path} answered ${response.status}`, response.status);
     }
     return response;
   }

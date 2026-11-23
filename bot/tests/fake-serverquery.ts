@@ -41,21 +41,36 @@ export class FakeTeamSpeak {
 
   /** Private messages sent, by client ID. */
   readonly messages: { clientId: number; text: string }[] = [];
-  /** Client IDs that have entered, and so can be messaged. */
-  private readonly present = new Set<number>();
+  /** Clients present now, and so can be messaged: client ID -> UID. */
+  private readonly present = new Map<number, string>();
   private nextClientId = 5;
 
   /**
    * A client enters the server now: the open connection, if any, is told (as `notifycliententerview`
-   * does for a subscribed one). Returns its client ID.
+   * does for a subscribed one). Returns its client ID: the next unused one, or `clientId`, as TeamSpeak
+   * hands a freed client ID to the next client that joins.
    */
-  enterClient(uid: string, nickname: string, options: { query?: boolean } = {}): number {
-    const clientId = this.nextClientId++;
+  enterClient(uid: string, nickname: string, options: { query?: boolean; clientId?: number } = {}): number {
+    const clientId = options.clientId ?? this.nextClientId++;
+    if (this.present.has(clientId)) throw new Error(`client ID ${clientId} is in use`);
     const query = options.query ?? false;
     this.online.push({ uid, query });
-    this.present.add(clientId);
+    this.present.set(clientId, uid);
     this.open?.enter(query, { uid, clientId, nickname });
     return clientId;
+  }
+
+  /** The client with this ID leaves the server, freeing its ID. */
+  leaveClient(clientId: number): void {
+    const uid = this.present.get(clientId);
+    this.present.delete(clientId);
+    const at = this.online.findIndex((client) => client.uid === uid);
+    if (at >= 0) this.online.splice(at, 1);
+  }
+
+  /** @internal The client IDs present holding `uid`, as `clientgetids` finds them. */
+  clientIdsOf(uid: string): number[] {
+    return [...this.present].filter(([, holder]) => holder === uid).map(([clientId]) => clientId);
   }
 
   /** @internal */
@@ -180,6 +195,14 @@ class FakeSession implements QuerySession {
       uids = this.server.online.filter((client) => !client.query).map((client) => client.uid);
     });
     return uids;
+  }
+
+  async clientIds(uid: string): Promise<number[]> {
+    let ids: number[] = [];
+    this.server.run(this, `clientgetids ${uid}`, () => {
+      ids = this.server.clientIdsOf(uid);
+    });
+    return ids;
   }
 
   async sendText(clientId: number, text: string): Promise<void> {

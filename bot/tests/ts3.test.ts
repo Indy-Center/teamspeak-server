@@ -6,6 +6,7 @@ import { FakeQueryServer, OK, type Answer } from './fake-query-server.js';
 // ts3-nodejs-library against a local raw ServerQuery server: the adapter's commands and errors.
 
 const UID = 'FakeUid/Alpha+AAAAAAAAAAAAA=';
+const TWICE_UID = 'FakeUidTwice/TTTTTTTTTTTT=';
 
 let server: FakeQueryServer | undefined;
 let session: QuerySession | undefined;
@@ -41,6 +42,11 @@ const answer: Answer = (name, args, positional) => {
         `clid=1 cid=1 client_database_id=41 client_nickname=Alpha\\sOne client_type=0 client_unique_identifier=${UID.replace(/\//g, '\\/')}|clid=2 cid=1 client_database_id=1 client_nickname=serveradmin client_type=1 client_unique_identifier=FakeQueryQQQQQQQQQQQQQQ=`,
         OK,
       ];
+    case 'clientgetids':
+      if (args['cluid'] === UID) return [`cluid=${UID.replace(/\//g, '\\/')} clid=1 name=Alpha\\sOne`, OK];
+      if (args['cluid'] === TWICE_UID) return ['cluid=FakeUidTwice\\/TTTTTTTTTTTT= clid=3 name=Twice|cluid=FakeUidTwice\\/TTTTTTTTTTTT= clid=4 name=Twice', OK];
+      // TeamSpeak's answer for a UID no client holds.
+      return ['error id=1281 msg=database\\sempty\\sresult\\sset'];
     case 'servernotifyregister':
       return [OK];
     case 'sendtextmessage':
@@ -125,6 +131,14 @@ describe('ts3Connector', () => {
     await vi.waitFor(() => expect(entered).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(entered).toEqual([{ uid: UID, clientId: 1, nickname: 'Alpha One' }]);
+  });
+
+  it('finds the client IDs holding a UID, and none for a UID no client holds', async () => {
+    session = await connect();
+    expect(await session.clientIds(UID)).toEqual([1]);
+    expect(server?.commands.at(-1)).toBe('clientgetids cluid=FakeUid\\/Alpha+AAAAAAAAAAAAA=');
+    expect(await session.clientIds(TWICE_UID)).toEqual([3, 4]);
+    expect(await session.clientIds('FakeUidGoneZZZZZZZZZZZZZZZ=')).toEqual([]);
   });
 
   it('sends a private text message to a client by its ID', async () => {

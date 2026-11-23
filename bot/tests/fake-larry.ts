@@ -16,6 +16,8 @@ export class FakeLarry {
   readonly retried: string[] = [];
   /** While true, every request fails as if larry can't be reached. */
   down = false;
+  /** A result larry finds invalid: a results body holding one gets 400 and queues nothing, as larry's does. */
+  refuses: (result: TsResult) => boolean = () => false;
   private held: Held[] = [];
 
   enqueue(...jobs: TsJob[]): void {
@@ -69,6 +71,7 @@ export class FakeLarry {
       }
       case '/teamspeak/results': {
         const results = (Array.isArray(body) ? body : [body]) as TsResult[];
+        if (results.some(this.refuses)) return new Response(null, { status: 400 });
         this.results.push(...results);
         return new Response(null, { status: 202 });
       }
