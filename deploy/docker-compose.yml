@@ -7,6 +7,9 @@ services:
     environment:
       TS3SERVER_LICENSE: accept
       TS3SERVER_IP_ALLOWLIST: /etc/ts3server/query_ip_allowlist.txt
+      # Passed through from .env or the shell only when set (the backup test sets it); naming just
+      # this one keeps teamspeak-bot's settings out of TeamSpeak's container.
+      TS3SERVER_SERVERADMIN_PASSWORD:
     ports:
       - "9987:9987/udp" # voice
       - "30033:30033/tcp" # file transfer
