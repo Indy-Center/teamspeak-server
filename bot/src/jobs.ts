@@ -13,7 +13,8 @@ export type Outcome = { jobId: string; ack: boolean; result: TsResult };
 
 /**
  * Applies one job over ServerQuery. Success acks it with `applied`. A UID TeamSpeak doesn't know is
- * acked as `failed: unknown uid`, since trying again can't help. Any other error asks larry for a
+ * acked as `failed: unknown uid`, since trying again can't help, as is a `send-text` no client can
+ * receive (`not connected`, `no uid`). Any other error asks larry for a
  * retry, with the error in a `failed` result.
  */
 export async function applyJob(session: QuerySession, job: TsJob): Promise<Outcome> {
@@ -25,8 +26,7 @@ export async function applyJob(session: QuerySession, job: TsJob): Promise<Outco
       case 'report-accounts':
         return { jobId, ack: true, result: await reportAccounts(session, job.groups) };
       case 'send-text':
-        await session.sendText(job.clientId, job.text);
-        return { jobId, ack: true, result: { type: 'applied', jobId } };
+        return await sendText(session, job);
       default:
         return retry(jobId, `unknown job type: ${(job as { type: unknown }).type}`);
     }
@@ -60,6 +60,23 @@ async function setGroups(session: QuerySession, job: Extract<TsJob, { type: 'set
   return undefined;
 }
 
+/**
+ * Messages every client holding the job's UID now, looked up just before sending. A UID no client holds
+ * (the person has left) is acked as `failed: not connected`, and a job without a UID (the shape before
+ * send-by-UID) as `failed: no uid`: trying again can't help either.
+ */
+async function sendText(session: QuerySession, job: Extract<TsJob, { type: 'send-text' }>): Promise<Outcome> {
+  const { jobId } = job;
+  if (typeof job.uid !== 'string' || job.uid === '') return { jobId, ack: true, result: { type: 'failed', jobId, error: 'no uid' } };
+  let sent = 0;
+  for (const clientId of await session.clientIds(job.uid)) {
+    // A client that left between the lookup and the message is skipped.
+    if (await tolerate(session.sendText(clientId, job.text), QUERY_ERRORS.invalidClientId)) sent += 1;
+  }
+  if (sent === 0) return { jobId, ack: true, result: { type: 'failed', jobId, error: 'not connected' } };
+  return { jobId, ack: true, result: { type: 'applied', jobId } };
+}
+
 /** Every client holding one of `groups`, with all its groups, and who is connected now. */
 async function reportAccounts(session: QuerySession, groups: number[]): Promise<TsResult> {
   const clients = new Map<string, string>(); // database ID -> UID
@@ -73,11 +90,14 @@ async function reportAccounts(session: QuerySession, groups: number[]): Promise<
   return { type: 'accounts', holders, connected: await session.connectedUids() };
 }
 
-async function tolerate(command: Promise<void>, errorId: string): Promise<void> {
+/** Runs `command`, counting TeamSpeak's `errorId` as done. Resolves whether the command itself succeeded. */
+async function tolerate(command: Promise<void>, errorId: string): Promise<boolean> {
   try {
     await command;
+    return true;
   } catch (error) {
     if (!isQueryError(error, errorId)) throw error;
+    return false;
   }
 }
 

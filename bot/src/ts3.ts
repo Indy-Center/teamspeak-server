@@ -94,6 +94,16 @@ function session(teamspeak: TeamSpeak): QuerySession {
       const clients = await run(() => teamspeak.execute<TeamSpeakQuery.Response>('clientlist', ['-uid']));
       return [clients].flat().filter((client) => String(client['clientType']) !== QUERY_CLIENT_TYPE).map((client) => String(client['clientUniqueIdentifier']));
     },
+    async clientIds(uid) {
+      try {
+        const clients = await run(() => teamspeak.clientGetIds(uid));
+        return clients.map((client) => Number(client.clid));
+      } catch (error) {
+        // TeamSpeak answers a UID no client holds with "database empty result set".
+        if (error instanceof QueryError && error.id === QUERY_ERRORS.emptyResult) return [];
+        throw error;
+      }
+    },
     async sendText(clientId, text) {
       await run(() => teamspeak.execute('sendtextmessage', { target: String(clientId), targetmode: TEXT_TO_CLIENT, msg: text }));
     },
