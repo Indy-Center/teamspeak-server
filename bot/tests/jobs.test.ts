@@ -290,7 +290,7 @@ describe('send-text', () => {
 });
 
 describe('polling', () => {
-  it('pulls again at once after jobs came back, and every 5 seconds when none did', async () => {
+  it('pulls again at once after jobs came back, and every 3 seconds when none did', async () => {
     teamspeak.addClient(UID, '41');
     larry.enqueue({ jobId: 'job-1', type: 'set-groups', uid: UID, add: [10], remove: [] });
     start();
@@ -298,13 +298,13 @@ describe('polling', () => {
     // One pull that found the job, one straight after that found nothing.
     expect(larry.pullCount()).toBe(2);
 
-    await vi.advanceTimersByTimeAsync(4_800);
+    await vi.advanceTimersByTimeAsync(2_800);
     expect(larry.pullCount()).toBe(2);
     await vi.advanceTimersByTimeAsync(200);
     expect(larry.pullCount()).toBe(3);
 
     larry.enqueue({ jobId: 'job-2', type: 'set-groups', uid: UID, add: [11], remove: [] });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(teamspeak.groupsOf(UID)).toEqual([10, 11]);
   });
 });
@@ -334,9 +334,9 @@ describe('larry unreachable', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(larry.acked).toEqual(['job-1']);
 
-    // Back to the 5-second poll once larry answers.
+    // Back to the 3-second poll once larry answers.
     const pulls = larry.pullCount();
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(larry.pullCount()).toBe(pulls + 1);
   });
 
