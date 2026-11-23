@@ -84,6 +84,43 @@ describe('a lost connection', () => {
   });
 });
 
+describe('client-connected', () => {
+  it('reports a client entering with its UID, client ID and nickname, and no query client', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    teamspeak.enterClient('FakeQueryQQQQQQQQQQQQQQ=', 'serveradmin', { query: true });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(larry.results).toEqual([{ type: 'client-connected', uid: UID, clientId, nickname: 'Alpha' }]);
+  });
+
+  it('keeps reporting after the connection was lost and made again', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    teamspeak.dropConnection();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(teamspeak.logins).toBe(2);
+    larry.results.length = 0;
+
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(larry.results).toEqual([{ type: 'client-connected', uid: UID, clientId, nickname: 'Alpha' }]);
+  });
+
+  it('keeps a report until larry can take it', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    larry.down = true;
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(larry.results).toEqual([]);
+    larry.down = false;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(larry.results).toEqual([{ type: 'client-connected', uid: UID, clientId, nickname: 'Alpha' }]);
+  });
+});
+
 describe('start-up', () => {
   it('retries a refused login on the same backoff rather than exiting', async () => {
     teamspeak.refuseLogins = 3;

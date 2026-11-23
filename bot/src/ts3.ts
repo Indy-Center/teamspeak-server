@@ -5,6 +5,8 @@ import { QUERY_ERRORS, QueryError, type ConnectQuery, type QuerySession } from '
 
 /** `client_type` of a query client; a regular client is 0. */
 const QUERY_CLIENT_TYPE = '1';
+/** `sendtextmessage` targetmode for one client. */
+const TEXT_TO_CLIENT = 1;
 /** The virtual server the bot works on. */
 const VIRTUAL_SERVER = '1';
 /** How long connecting, or one command, may take before the connection is given up as broken. */
@@ -29,6 +31,8 @@ export function ts3Connector(options: { host: string; port: number; user: string
         await teamspeak.connect();
         await teamspeak.login(options.user, options.password);
         await teamspeak.useBySid(VIRTUAL_SERVER);
+        // Server events (a client entering) are per connection: subscribe on every new one.
+        await teamspeak.registerEvent('server');
       });
     } catch (error) {
       teamspeak.forceQuit();
@@ -89,6 +93,15 @@ function session(teamspeak: TeamSpeak): QuerySession {
     async connectedUids() {
       const clients = await run(() => teamspeak.execute<TeamSpeakQuery.Response>('clientlist', ['-uid']));
       return [clients].flat().filter((client) => String(client['clientType']) !== QUERY_CLIENT_TYPE).map((client) => String(client['clientUniqueIdentifier']));
+    },
+    async sendText(clientId, text) {
+      await run(() => teamspeak.execute('sendtextmessage', { target: String(clientId), targetmode: TEXT_TO_CLIENT, msg: text }));
+    },
+    onClientEnter(listener) {
+      teamspeak.on('clientconnect', ({ client }) => {
+        if (String(client.type) === QUERY_CLIENT_TYPE) return;
+        listener({ uid: client.uniqueIdentifier, clientId: Number(client.clid), nickname: client.nickname });
+      });
     },
     onClose(listener) {
       teamspeak.once('close', () => listener());

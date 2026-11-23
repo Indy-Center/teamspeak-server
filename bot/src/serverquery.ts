@@ -16,6 +16,13 @@ export interface QuerySession {
   groupsOfClient(databaseId: string): Promise<number[]>;
   /** `clientlist -uid`: the UIDs connected now, query clients excluded. */
   connectedUids(): Promise<string[]>;
+  /** `sendtextmessage` in client mode: a private message to the client with this ID (`clid`). */
+  sendText(clientId: number, text: string): Promise<void>;
+  /**
+   * Calls `listener` for each client entering the server (`notifycliententerview`), query clients
+   * excluded. The subscription belongs to the connection, so a new connection is subscribed again.
+   */
+  onClientEnter(listener: (client: { uid: string; clientId: number; nickname: string }) => void): void;
   /** Called once when the connection is lost, or closed by `quit`. */
   onClose(listener: () => void): void;
   /** Logs out and closes the connection. */

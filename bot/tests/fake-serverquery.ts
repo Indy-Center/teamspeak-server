@@ -39,6 +39,31 @@ export class FakeTeamSpeak {
   /** @internal */
   readonly online: { uid: string; query: boolean }[] = [];
 
+  /** Private messages sent, by client ID. */
+  readonly messages: { clientId: number; text: string }[] = [];
+  /** Client IDs that have entered, and so can be messaged. */
+  private readonly present = new Set<number>();
+  private nextClientId = 5;
+
+  /**
+   * A client enters the server now: the open connection, if any, is told (as `notifycliententerview`
+   * does for a subscribed one). Returns its client ID.
+   */
+  enterClient(uid: string, nickname: string, options: { query?: boolean } = {}): number {
+    const clientId = this.nextClientId++;
+    const query = options.query ?? false;
+    this.online.push({ uid, query });
+    this.present.add(clientId);
+    this.open?.enter(query, { uid, clientId, nickname });
+    return clientId;
+  }
+
+  /** @internal */
+  deliver(clientId: number, text: string): void {
+    if (!this.present.has(clientId)) throw new QueryError('512', 'invalid clientID');
+    this.messages.push({ clientId, text });
+  }
+
   groupsOf(uid: string): number[] {
     return [...(this.clients.get(uid)?.groups ?? [])].sort((a, b) => a - b);
   }
@@ -155,6 +180,22 @@ class FakeSession implements QuerySession {
       uids = this.server.online.filter((client) => !client.query).map((client) => client.uid);
     });
     return uids;
+  }
+
+  async sendText(clientId: number, text: string): Promise<void> {
+    this.server.run(this, `sendtextmessage ${clientId} ${text}`, () => this.server.deliver(clientId, text));
+  }
+
+  private enterListeners: Parameters<QuerySession['onClientEnter']>[0][] = [];
+
+  onClientEnter(listener: Parameters<QuerySession['onClientEnter']>[0]): void {
+    this.enterListeners.push(listener);
+  }
+
+  /** @internal The server's enter notification; the real adapter drops query clients itself. */
+  enter(query: boolean, client: { uid: string; clientId: number; nickname: string }): void {
+    if (query) return;
+    for (const listener of this.enterListeners) listener(client);
   }
 
   onClose(listener: () => void): void {

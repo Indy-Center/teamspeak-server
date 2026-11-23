@@ -40,6 +40,11 @@ export class FakeQueryServer {
     return address.port;
   }
 
+  /** Sends a notification line (`notify...`) to every open connection. */
+  notify(line: string): void {
+    for (const socket of this.sockets) socket.write(`${line}\n\r`);
+  }
+
   /** Closes every open connection from the server's side. */
   dropConnections(): void {
     for (const socket of this.sockets) socket.destroy();

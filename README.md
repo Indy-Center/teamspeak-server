@@ -103,6 +103,7 @@ teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds n
   - `POST /teamspeak/jobs/ack` with `{ "acks": [jobId], "retries": [jobId] }`, answered `204`, after the results. larry moves a job to its dead-letter table after 5 tries.
 - Pulls again at once when jobs came back, every 5 seconds when none did, and 5 seconds after any retry (larry hands a retried job out again straight away).
 - Sends `heartbeat` every 5 minutes.
+- Subscribes to client-enter events on each ServerQuery connection, including every reconnection, and sends `client-connected` for each client that enters, query clients excluded. It never sends a message of its own accord: the text comes from larry's `send-text` job.
 - Logs to stdout only. It logs job IDs and outcomes, never UIDs or settings' values.
 
 **Jobs**, as JSON:
@@ -110,14 +111,15 @@ teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds n
 - `{ jobId, type: "set-groups", uid, add: number[], remove: number[] }`: adds the client with that unique ID to the server groups in `add` and takes it out of those in `remove`; other groups are left alone. A group the client already has, or no longer has, counts as done. Answered `applied` and acked. A UID the server doesn't know is answered `failed` with `error: "unknown uid"` and acked, since a retry can't help. Any other ServerQuery error is answered `failed` with the error, and retried.
   - A job whose `add` or `remove` names an admin group (1 Guest Server Query, 2 Admin Server Query, 6 Server Admin, 8 Guest, 27 the bot's own) is refused before any ServerQuery command: answered `failed` with `error: "admin group <id>"` and acked. The list is `ADMIN_GROUPS` in `bot/src/jobs.ts`, the same as larry's.
 - `{ jobId, type: "report-accounts", groups: number[] }`: answered with one `accounts` result and acked. `holders` is every client in the client database holding at least one of `groups`, once each, with all its server groups; `connected` is the UIDs connected now, query clients excluded. A ServerQuery error is answered `failed` and retried.
+- `{ jobId, type: "send-text", clientId, text }`: sends `text` to the client with that client ID (`clid`, from its `client-connected` result) as a private message. Answered `applied` and acked. A ServerQuery error (a client that has left, say) is answered `failed` and retried.
 - A job type the bot doesn't know is answered `failed` (`unknown job type: <type>`) and retried.
 
-**Results**, as JSON: `{ type: "applied", jobId }`, `{ type: "failed", jobId, error? }`, `{ type: "heartbeat", at }` and `{ type: "reconnected", at }` and `{ type: "accounts", holders: { uid, groups: number[] }[], connected: string[] }`, where `at` is an ISO 8601 time. The job and result shapes are in `bot/src/teamspeak-shape.ts`, a copy of indy-larry's `worker/src/teamspeak-shape.ts`: there is no shared package, so a change to one is made to the other.
+**Results**, as JSON: `{ type: "applied", jobId }`, `{ type: "failed", jobId, error? }`, `{ type: "heartbeat", at }`, `{ type: "reconnected", at }`, `{ type: "accounts", holders: { uid, groups: number[] }[], connected: string[] }` and `{ type: "client-connected", uid, clientId, nickname }`, where `at` is an ISO 8601 time. The job and result shapes are in `bot/src/teamspeak-shape.ts`, a copy of indy-larry's `worker/src/teamspeak-shape.ts`: there is no shared package, so a change to one is made to the other.
 
 **When things fail**, it retries rather than exiting, so a deploy never sees it restart:
 
 - ServerQuery refused or unreachable, at start-up or later: tries again after 1 second, doubling to 60. After a lost connection it reconnects the same way, then sends `reconnected`, on which larry runs a full sync. A ServerQuery command with no answer for 30 seconds closes the connection and reconnects. No job is pulled while it is disconnected.
-- larry unreachable, or answering anything but what the route promises: backs off the same way, keeping its ServerQuery connection. A job whose results or ack don't reach larry isn't acked, so larry hands it out again when its lease runs out. A `heartbeat` or `reconnected` that doesn't reach larry is sent again until it does (only the latest heartbeat is kept).
+- larry unreachable, or answering anything but what the route promises: backs off the same way, keeping its ServerQuery connection. A job whose results or ack don't reach larry isn't acked, so larry hands it out again when its lease runs out. A `heartbeat`, `reconnected` or `client-connected` that doesn't reach larry is sent again until it does (only the latest heartbeat is kept).
 - A missing setting stops it at start with a message naming the setting. That is the one case it exits.
 
 `restore.sh` stops and starts only the `teamspeak` service, so the bot keeps running through a restore and reports `reconnected` once TeamSpeak is back.

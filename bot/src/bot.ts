@@ -80,6 +80,8 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
           log('ServerQuery connection lost; reconnecting');
           void keepConnected(true);
         });
+        // Each connection is subscribed to client-enter events afresh, so they survive a reconnect.
+        opened.onClientEnter((client) => report({ type: 'client-connected', ...client }));
         session = opened;
         log(lost ? 'ServerQuery reconnected' : 'ServerQuery connected');
         for (const wake of waiters) wake();

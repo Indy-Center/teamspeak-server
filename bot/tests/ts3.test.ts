@@ -38,9 +38,13 @@ const answer: Answer = (name, args, positional) => {
       return ['name=Member sgid=7 cldbid=41|name=Guest sgid=8 cldbid=41', OK];
     case 'clientlist':
       return [
-        `clid=1 cid=1 client_database_id=41 client_type=0 client_unique_identifier=${UID.replace(/\//g, '\\/')}|clid=2 cid=1 client_database_id=1 client_type=1 client_unique_identifier=FakeQueryQQQQQQQQQQQQQQ=`,
+        `clid=1 cid=1 client_database_id=41 client_nickname=Alpha\\sOne client_type=0 client_unique_identifier=${UID.replace(/\//g, '\\/')}|clid=2 cid=1 client_database_id=1 client_nickname=serveradmin client_type=1 client_unique_identifier=FakeQueryQQQQQQQQQQQQQQ=`,
         OK,
       ];
+    case 'servernotifyregister':
+      return [OK];
+    case 'sendtextmessage':
+      return args['target'] === '1' && args['targetmode'] === '1' ? [OK] : ['error id=512 msg=invalid\\sclientID'];
     default:
       return ['error id=256 msg=command\\snot\\sfound'];
   }
@@ -71,6 +75,7 @@ describe('ts3Connector', () => {
     expect(server?.commands.filter((command) => !command.startsWith('version'))).toEqual([
       'login fake-user fake-password',
       'use 1 -virtual',
+      'servernotifyregister event=server',
     ]);
   });
 
@@ -107,6 +112,26 @@ describe('ts3Connector', () => {
     expect(await session.groupMembers(5)).toEqual([]);
     expect(await session.groupsOfClient('41')).toEqual([7, 8]);
     expect(await session.connectedUids()).toEqual([UID]);
+  });
+
+  it('subscribes to server events on connecting and reports entering clients, but not query clients', async () => {
+    session = await connect();
+    expect(server?.commands).toContain('servernotifyregister event=server');
+    const entered: { uid: string; clientId: number; nickname: string }[] = [];
+    session.onClientEnter((client) => entered.push(client));
+
+    server?.notify('notifycliententerview cfid=0 ctid=1 reasonid=0 clid=2 client_unique_identifier=FakeQueryQQQQQQQQQQQQQQ=');
+    server?.notify('notifycliententerview cfid=0 ctid=1 reasonid=0 clid=1 client_unique_identifier=x');
+    await vi.waitFor(() => expect(entered).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(entered).toEqual([{ uid: UID, clientId: 1, nickname: 'Alpha One' }]);
+  });
+
+  it('sends a private text message to a client by its ID', async () => {
+    session = await connect();
+    await session.sendText(1, 'Hello there');
+    expect(server?.commands.at(-1)).toBe('sendtextmessage target=1 targetmode=1 msg=Hello\\sthere');
+    await expect(session.sendText(9, 'Hello')).rejects.toMatchObject({ id: '512' });
   });
 
   it('tells the bot when the server closes the connection', async () => {

@@ -208,6 +208,31 @@ describe('report-accounts', () => {
   });
 });
 
+describe('send-text', () => {
+  it('sends the text to the client as a private message, then applied and an ack', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    larry.results.length = 0;
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', clientId, text: 'Link: https://example.test/profile?ts=fake-token' });
+    await vi.advanceTimersByTimeAsync(5_100);
+
+    expect(teamspeak.messages).toEqual([{ clientId, text: 'Link: https://example.test/profile?ts=fake-token' }]);
+    expect(larry.results).toEqual([{ type: 'applied', jobId: 'job-1' }]);
+    expect(larry.acked).toEqual(['job-1']);
+  });
+
+  it('asks for a retry when TeamSpeak refuses the message', async () => {
+    larry.enqueue({ jobId: 'job-1', type: 'send-text', clientId: 99, text: 'Hello' });
+    start();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(teamspeak.messages).toEqual([]);
+    expect(larry.retried).toEqual(['job-1']);
+    expect(larry.results[0]).toMatchObject({ type: 'failed', jobId: 'job-1', error: 'ServerQuery error 512: invalid clientID' });
+  });
+});
+
 describe('polling', () => {
   it('pulls again at once after jobs came back, and every 5 seconds when none did', async () => {
     teamspeak.addClient(UID, '41');

@@ -24,6 +24,9 @@ export async function applyJob(session: QuerySession, job: TsJob): Promise<Outco
         return (await setGroups(session, job)) ?? { jobId, ack: true, result: { type: 'applied', jobId } };
       case 'report-accounts':
         return { jobId, ack: true, result: await reportAccounts(session, job.groups) };
+      case 'send-text':
+        await session.sendText(job.clientId, job.text);
+        return { jobId, ack: true, result: { type: 'applied', jobId } };
       default:
         return retry(jobId, `unknown job type: ${(job as { type: unknown }).type}`);
     }
