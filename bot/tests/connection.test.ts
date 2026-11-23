@@ -121,6 +121,76 @@ describe('client-connected', () => {
   });
 });
 
+describe('a results body larry refuses', () => {
+  const BAD_UID = '';
+  const OTHER_UID = 'FakeUidBravoBBBBBBBBBBBBBBB=';
+
+  it('posts the waiting results one at a time, dropping and logging only the one larry refuses', async () => {
+    larry.refuses = (result) => result.type === 'client-connected' && result.uid === BAD_UID;
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    larry.down = true;
+    const before = teamspeak.enterClient(UID, 'Alpha');
+    teamspeak.enterClient(BAD_UID, 'Nobody');
+    const after = teamspeak.enterClient(OTHER_UID, 'Bravo');
+    await vi.advanceTimersByTimeAsync(500);
+    larry.down = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(larry.results).toEqual([
+      { type: 'client-connected', uid: UID, clientId: before, nickname: 'Alpha' },
+      { type: 'client-connected', uid: OTHER_UID, clientId: after, nickname: 'Bravo' },
+    ]);
+    expect(logs).toContainEqual(expect.stringMatching(/larry refused a client-connected result; dropped it/));
+  });
+
+  it('keeps heartbeats and connect reports flowing afterwards', async () => {
+    larry.refuses = (result) => result.type === 'client-connected' && result.uid === BAD_UID;
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    teamspeak.enterClient(BAD_UID, 'Nobody');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(larry.results).toEqual([]);
+
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(larry.results).toEqual([
+      { type: 'client-connected', uid: UID, clientId, nickname: 'Alpha' },
+      { type: 'heartbeat', at: '2026-11-22T12:05:00.000Z' },
+    ]);
+  });
+
+  it('keeps the rest for later when larry goes away part-way through', async () => {
+    larry.refuses = (result) => result.type === 'client-connected' && result.uid === BAD_UID;
+    // Once set, larry answers the first results post (the refused batch) and none after it.
+    let resultPosts: number | null = null;
+    const realFetch = larry.fetch;
+    const larryClient = createLarry({
+      url: LARRY_URL,
+      secret: LARRY_SECRET,
+      fetch: async (input, init) => {
+        if (resultPosts !== null && String(input).endsWith('/teamspeak/results') && ++resultPosts > 1) throw new TypeError('fetch failed');
+        return realFetch(input, init);
+      },
+    });
+    bot = startBot({ connect: teamspeak.connect, larry: larryClient, log: (line) => logs.push(line) });
+    await vi.advanceTimersByTimeAsync(0);
+    larry.down = true;
+    teamspeak.enterClient(BAD_UID, 'Nobody');
+    const clientId = teamspeak.enterClient(UID, 'Alpha');
+    await vi.advanceTimersByTimeAsync(500);
+
+    larry.down = false;
+    resultPosts = 0;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(larry.results).toEqual([]);
+
+    resultPosts = null;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(larry.results).toEqual([{ type: 'client-connected', uid: UID, clientId, nickname: 'Alpha' }]);
+  });
+});
+
 describe('start-up', () => {
   it('retries a refused login on the same backoff rather than exiting', async () => {
     teamspeak.refuseLogins = 3;

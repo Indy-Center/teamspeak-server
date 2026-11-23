@@ -1,5 +1,5 @@
 import { applyJob, describeError } from './jobs.js';
-import type { Larry } from './larry.js';
+import { isRefused, type Larry } from './larry.js';
 import type { ConnectQuery, QuerySession } from './serverquery.js';
 import type { TsResult } from './teamspeak-shape.js';
 
@@ -148,7 +148,8 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
     }
   }
 
-  // Results that answer no job (heartbeat, reconnected): sent at once, and kept until larry has them.
+  // Results that answer no job (heartbeat, reconnected, client-connected): sent at once, and kept until
+  // larry has them, or refuses one (400), which is dropped.
 
   let outbox: TsResult[] = [];
   let flushing = false;
@@ -166,23 +167,56 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
     if (flushing || flushRetry || stopping.signal.aborted || outbox.length === 0) return;
     flushing = true;
     const sending = [...outbox];
-    let sent = false;
+    let failure: unknown;
     try {
       await larry.postResults(sending);
-      outbox = outbox.filter((waiting) => !sending.includes(waiting));
-      outboxBackoff.reset();
-      sent = true;
+      take(sending);
     } catch (error) {
-      const delay = outboxBackoff.take();
-      log(`larry: ${describeError(error)}; sending ${sending.map((result) => result.type).join(', ')} again in ${delay / 1000} s`);
-      flushRetry = setTimeout(() => {
-        flushRetry = undefined;
-        void flush();
-      }, delay);
+      if (!isRefused(error)) failure = error;
+      else if (sending.length === 1) drop(sending[0]!, error);
+      // larry refuses a whole body for one invalid result: find it, so the rest still get through.
+      else failure = await postEach(sending);
     } finally {
       flushing = false;
     }
-    if (sent && outbox.length > 0) void flush();
+    if (failure === undefined) {
+      outboxBackoff.reset();
+      if (outbox.length > 0) void flush();
+      return;
+    }
+    const delay = outboxBackoff.take();
+    log(`larry: ${describeError(failure)}; sending ${outbox.map((result) => result.type).join(', ')} again in ${delay / 1000} s`);
+    flushRetry = setTimeout(() => {
+      flushRetry = undefined;
+      void flush();
+    }, delay);
+  }
+
+  /**
+   * Posts `results` one at a time after larry refused them together, dropping (and logging) each one it
+   * refuses on its own. Stops at any other failure, leaving the rest in the outbox, and returns it.
+   */
+  async function postEach(results: TsResult[]): Promise<unknown> {
+    for (const result of results) {
+      try {
+        await larry.postResults([result]);
+        take([result]);
+      } catch (error) {
+        if (!isRefused(error)) return error;
+        drop(result, error);
+      }
+    }
+    return undefined;
+  }
+
+  function take(results: TsResult[]): void {
+    outbox = outbox.filter((waiting) => !results.includes(waiting));
+  }
+
+  function drop(result: TsResult, error: unknown): void {
+    // The result itself isn't logged: it may hold a UID.
+    log(`larry refused a ${result.type} result; dropped it (${describeError(error)})`);
+    take([result]);
   }
 
   const heartbeat = setInterval(() => report({ type: 'heartbeat', at: now().toISOString() }), HEARTBEAT_MS);
