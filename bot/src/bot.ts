@@ -6,7 +6,9 @@ import type { TsResult } from './teamspeak-shape.js';
 /** The most jobs one pull asks for. */
 export const PULL_MAX = 10;
 /** How long the bot waits before pulling again when larry had no job. */
-export const POLL_MS = 5_000;
+export const POLL_MS = 3_000;
+/** How long the bot waits after asking for a retry, so a failing job's 5 tries aren't spent in a burst. */
+export const RETRY_WAIT_MS = 5_000;
 export const HEARTBEAT_MS = 5 * 60_000;
 /** Backoff, for ServerQuery and for larry alike: 1 second, doubling to 60. */
 export const BACKOFF_FIRST_MS = 1_000;
@@ -137,8 +139,8 @@ export function startBot(options: { connect: ConnectQuery; larry: Larry; log?: L
           outcomes.filter((outcome) => outcome.ack).map((outcome) => outcome.jobId),
           outcomes.filter((outcome) => !outcome.ack).map((outcome) => outcome.jobId),
         );
-        // larry hands a retried job out again at once: wait a poll first, so its tries aren't spent in a burst.
-        if (outcomes.some((outcome) => !outcome.ack)) await sleep(POLL_MS);
+        // larry hands a retried job out again at once: wait first, so its tries aren't spent in a burst.
+        if (outcomes.some((outcome) => !outcome.ack)) await sleep(RETRY_WAIT_MS);
       } catch (error) {
         // Unacked, these jobs come back from larry once their lease runs out.
         const delay = backoff.take();

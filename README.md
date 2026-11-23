@@ -101,7 +101,7 @@ teamspeak-bot (`bot/`) carries out the role sync's TeamSpeak changes. It holds n
   - `POST /teamspeak/jobs/pull` with `{ "max": 10 }`, answered `200 { "jobs": [...] }`. Each job is leased to the bot for 60 seconds.
   - `POST /teamspeak/results`, a list of results, answered `202`.
   - `POST /teamspeak/jobs/ack` with `{ "acks": [jobId], "retries": [jobId] }`, answered `204`, after the results. larry moves a job to its dead-letter table after 5 tries.
-- Pulls again at once when jobs came back, every 5 seconds when none did, and 5 seconds after any retry (larry hands a retried job out again straight away).
+- Pulls again at once when jobs came back, every 3 seconds when none did, and 5 seconds after any retry (larry hands a retried job out again straight away).
 - Sends `heartbeat` every 5 minutes.
 - Subscribes to client-enter events on each ServerQuery connection, including every reconnection, and sends `client-connected` for each client that enters, query clients excluded. It never sends a message of its own accord: the text comes from larry's `send-text` job.
 - Logs to stdout only. It logs job IDs and outcomes, never UIDs or settings' values.
